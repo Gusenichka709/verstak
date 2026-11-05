@@ -97,6 +97,13 @@ D.chest_side = (g, r, P) => {
 };
 D.chest_front = (g, r, P) => { D.chest_side(g, r, P); g.fillStyle = '#d8d8d8'; g.fillRect(7, 3, 2, 4); g.fillStyle = '#7a7a7a'; g.fillRect(7, 6, 2, 1); };
 D.chest_top = (g, r, P) => { noise(P, r, ['#a86f2c', '#9c6527', '#b27833']); frame(g, '#3d2610'); };
+// половинки большого сундука: на шве рамки нет (копируем соседнюю колонку), у лица — полкнопки замка
+for (const c of [0, 15]) {
+  const open = base => (g, r, P) => { base(g, r, P); g.drawImage(g.canvas, c ? 14 : 1, 0, 1, 16, c, 0, 1, 16); };
+  D['chest_side_s' + c] = open(D.chest_side);
+  D['chest_top_s' + c] = open(D.chest_top);
+  D['chest_front_s' + c] = (g, r, P) => { open(D.chest_side)(g, r, P); g.fillStyle = '#d8d8d8'; g.fillRect(c, 3, 1, 4); g.fillStyle = '#7a7a7a'; g.fillRect(c, 6, 1, 1); };
+}
 D.barrel_side = (g, r, P) => {
   for (let x = 0; x < 16; x++) {
     const t = ['#8d6236', '#7f5830', '#99693b'][((x / 4) | 0) % 3];
@@ -458,10 +465,20 @@ function railModel(axis) {
   if (axis === 'x') p.rotation.z = Math.PI / 2;
   return grp(p);
 }
-function chestModel(f) {
-  const s = mat('chest_side'), t = mat('chest_top');
-  const m = bx(.875, .875, .875, .5, .4375, .5, [s, s, t, t, s, mat('chest_front')]);
-  return pivot(m, 0, YROT[f || 'n'], 0);
+// Два сундука бок о бок с одним направлением — как в игре, один большой: каждая половина
+// дотягивается до общей середины, шов без рамки, замок посередине.
+function chestModel(e, w) {
+  const f = e.p.f || 'n', a = YROT[f], dx = Math.round(Math.cos(a)), dz = Math.round(-Math.sin(a)); // куда смотрит локальный +x
+  const twin = (sx, sz) => { const nb = w.at?.(e.x + sx, e.y, e.z + sz); return nb?.t === 'chest' && (nb.p.f || 'n') === f; };
+  const seam = twin(dx, dz) ? 1 : twin(-dx, -dz) ? -1 : 0;
+  if (!seam) {
+    const s = mat('chest_side'), t = mat('chest_top');
+    return pivot(bx(.875, .875, .875, .5, .4375, .5, [s, s, t, t, s, mat('chest_front')]), 0, a, 0);
+  }
+  // шов на +x: у верха и задней стенки он справа (колонка 15), у лица — слева (0)
+  const far = seam > 0 ? 15 : 0, near = 15 - far, s = mat('chest_side'), t = mat('chest_top_s' + far);
+  const m = bx(.9375, .875, .875, seam > 0 ? .53125 : .46875, .4375, .5, [s, s, t, t, mat('chest_side_s' + far), mat('chest_front_s' + near)]);
+  return pivot(m, 0, a, 0);
 }
 function markerModel(color) {
   const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .28, depthWrite: false });
@@ -479,7 +496,7 @@ export const BLOCKS = {
   planks: { n: 'Доски', cat: 'b', build: () => cube('planks') },
   glass: { n: 'Стекло', cat: 'b', build: () => cullable(cube('glass'), 'glass', [1, 1, 1]) },
   hopper: { n: 'Воронка', cat: 'm', build: e => hopper(e.p.f) },
-  chest: { n: 'Сундук', cat: 'm', build: e => chestModel(e.p.f) },
+  chest: { n: 'Сундук', cat: 'm', build: (e, w) => chestModel(e, w) },
   barrel: { n: 'Бочка', cat: 'm', build: () => cube('barrel_top', 'barrel_side') },
   composter: { n: 'Компостер', cat: 'm', build: () => bx(1, 1, 1, .5, .5, .5, six(mat('composter_top'), mat('composter_side'), mat('composter_side'))) },
   lectern: { n: 'Кафедра', cat: 'm', build: () => bx(1, .9, 1, .5, .45, .5, six(mat('lectern_top'), mat('lectern_side'), mat('lectern_side'))) },

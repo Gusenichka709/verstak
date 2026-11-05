@@ -247,6 +247,7 @@ export class Viewer {
     const fa = this.finalAt;
     return {
       isType: (x, y, z, t) => fa.get(K(x, y, z))?.t === t,
+      at: (x, y, z) => fa.get(K(x, y, z)),
       dustConn: e => ['n', 's', 'e', 'w'].filter(d => {
         const [dx, , dz] = DIRS[d]; const nb = fa.get(K(e.x + dx, e.y, e.z + dz));
         if (!nb) return false;
