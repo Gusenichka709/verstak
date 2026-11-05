@@ -578,5 +578,21 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) stopP
 
 // офлайн и установка на телефон (PWA); в превью без https просто не включится
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && document.querySelector('link[rel=manifest]')) {
-  navigator.serviceWorker.register('./sw.js').catch(err => console.warn('Офлайн-режим не включился:', err));
+  // новая версия: воркер её уже скачал и включил, а на странице ещё старый код — предлагаем перезагрузиться.
+  // Первая установка тоже меняет контроллер, но тогда страница и так свежая: плашку не показываем.
+  const had = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) showUpdate(); });
+  navigator.serviceWorker.register('./sw.js').then(reg => {
+    // на телефоне сайт висит открытым днями: проверяем обновление, когда к нему возвращаешься
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(err => console.warn('Офлайн-режим не включился:', err));
+}
+function showUpdate() {
+  if ($('#upd')) return;
+  const b = document.createElement('div');
+  b.id = 'upd'; b.className = 'upd'; b.setAttribute('role', 'status');
+  b.innerHTML = '<span>Есть новая версия</span><button class="btn primary" type="button">Обновить</button><button class="x" type="button" aria-label="Позже">✕</button>';
+  b.querySelector('.primary').onclick = () => location.reload();
+  b.querySelector('.x').onclick = () => b.remove();
+  document.body.append(b);
 }

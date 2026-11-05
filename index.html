@@ -410,6 +410,15 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 .btn:active:not(:disabled), .pchips button:active, .seg label:active { transform: translateY(1px) scale(.95); box-shadow: inset 0 1px 0 rgba(0,0,0,.25); transition-duration: .07s; }
 .steps button:active { transform: scale(.98); transition-duration: .07s; }
 
+/* плашка «Есть новая версия»: снизу по центру, выезжает с пружинкой */
+.upd { position: fixed; left: 50%; bottom: 16px; z-index: 20; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 14px; background: var(--panel2); border: 1px solid rgba(240,185,74,.5); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  transform: translateX(-50%); animation: updIn .45s var(--spring) both; }
+.upd span { font-size: 14px; white-space: nowrap; }
+.upd .x { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 4px 6px; border-radius: 6px; font-size: 14px; }
+.upd .x:hover { color: var(--ink); }
+@keyframes updIn { from { opacity: 0; transform: translate(-50%, 24px) scale(.96); } }
+
 /* меньше движения: короткие проявления остаются, сдвигов нет */
 @media (prefers-reduced-motion: reduce) {
   :root { --spring: ease; --out: ease; }
