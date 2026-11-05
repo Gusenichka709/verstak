@@ -13,6 +13,18 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const farms = await Promise.all(FARM_IDS.map(id => import(`./farms/${id}.js`).then(m => m.default)));
 let farm = null, viewer = null, playing = null, curK = 1;
 
+/* ---------- анимации интерфейса (сами анимации — в CSS) ---------- */
+// номер по порядку для «лесенки»: карточки появляются друг за другом
+const stagger = (root, sel = ':scope > *') => root.querySelectorAll(sel).forEach((el, i) => el.style.setProperty('--i', i));
+let shownPanel = null; // какая ферма и шаг сейчас в панели: от этого зависит, как она въезжает
+function moveTabPill() {
+  const tabs = $('.tabs'), on = tabs.querySelector('a[aria-current="page"]'), pill = tabs.querySelector('.tabpill');
+  if (!on || !on.offsetWidth) return;
+  pill.style.width = on.offsetWidth + 'px';
+  pill.style.transform = `translateX(${on.offsetLeft}px)`;
+  if (!tabs.classList.contains('ready')) requestAnimationFrame(() => tabs.classList.add('ready'));
+}
+
 /* ---------- материалы ---------- */
 function materials(f, only) {
   const out = new Map();
@@ -37,6 +49,7 @@ function renderPicker() {
     <a class="pick${f === farm ? ' on' : ''}" href="#${f.id}" aria-current="${f === farm ? 'page' : 'false'}">
       <b>${esc(f.title)}</b><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i>
     </a>`).join('');
+  stagger($('#picker'));
 }
 function renderPanel(k) {
   const s = farm.steps[k - 1], N = farm.steps.length;
@@ -67,6 +80,11 @@ function renderPanel(k) {
       <h4>Материалы на всю ферму</h4>
       <ul class="chips all">${chips(materials(farm))}${(farm.extra || []).map(([n, c]) => `<li class="mob"><span>${esc(n)}</span><b>×${c}</b></li>`).join('')}</ul>
     </section>`;
+  const p = $('#panel'), was = shownPanel;
+  p.dataset.anim = !was || was.farm !== farm ? 'farm' : k > was.k ? 'next' : k < was.k ? 'prev' : '';
+  if (!p.dataset.anim) delete p.dataset.anim;
+  shownPanel = { farm, k };
+  stagger(p); stagger(p, '.stepcard > *'); stagger(p, '.stepcard .chips li');
 }
 function setStep(k, animate = true, replay = false) {
   if (viewer) { viewer.goto(k, { animate, replay }); curK = viewer.k; }
@@ -75,8 +93,10 @@ function setStep(k, animate = true, replay = false) {
   updateControls();
 }
 function chip() {
-  const k = viewer.k, N = farm.steps.length, c = viewer.opt.cut;
-  $('#stepchip').innerHTML = `<b>${k}/${N}</b> ${esc(farm.steps[k - 1].t)}${c !== null ? ` <i class="cutbadge">срез: до y=${c}</i>` : ''}${viewer.cutReset ? ' <i class="cutbadge ok">срез сброшен, чтобы было видно новое</i>' : ''}`;
+  const k = viewer.k, N = farm.steps.length, c = viewer.opt.cut, sc = $('#stepchip');
+  // номер шага подпрыгивает, когда меняется
+  if (sc.dataset.k !== `${farm.id}:${k}`) { sc.dataset.k = `${farm.id}:${k}`; sc.classList.remove('bump'); void sc.offsetWidth; sc.classList.add('bump'); }
+  sc.innerHTML = `<b>${k}/${N}</b> ${esc(farm.steps[k - 1].t)}${c !== null ? ` <i class="cutbadge">срез: до y=${c}</i>` : ''}${viewer.cutReset ? ' <i class="cutbadge ok">срез сброшен, чтобы было видно новое</i>' : ''}`;
 }
 function updateControls() {
   if (!viewer) return;
@@ -193,6 +213,9 @@ function initControls() {
 
 /* ---------- шпаргалка: жители ---------- */
 const em = '<i class="em" aria-label="изумруд"></i>';
+const norm = s => String(s ?? '').toLowerCase().replace(/ё/g, 'е');
+const stem = w => { const s = w.replace(/[аеиоуыэюяйь]+$/, ''); return s.length >= 3 ? s : w; };
+
 function renderVillagers() {
   const row = (lv, [sells, buys]) => `
     <div class="lv"><div class="lvn">${lv}</div>
@@ -206,7 +229,7 @@ function renderVillagers() {
       <label class="search"><span>Найти</span><input id="vq" type="search" placeholder="книга, железо, седло…" autocomplete="off"></label>
     </header>
     <div class="cards" id="vcards">${VIL.profs.map(p => `
-      <article class="prof" data-text="${esc((p.n + ' ' + p.ws + ' ' + JSON.stringify(p.lv)).toLowerCase())}">
+      <article class="prof" data-text="${esc(norm([p.n, p.ws, p.craft, p.best, p.note, JSON.stringify(p.lv)].join(' ')))}">
         <header>${wsIcon(p.id, p.ws)}<div><h3>${esc(p.n)}</h3><p>Рабочее место: <b>${esc(p.ws)}</b></p></div></header>
         ${p.craft ? `<p class="wscraft"><span>Крафт</span>${esc(p.craft)}</p>` : ''}
         <p class="best">${esc(p.best)}</p>
@@ -215,10 +238,19 @@ function renderVillagers() {
         ${p.note ? `<p class="pnote">${esc(p.note)}</p>` : ''}
       </article>`).join('')}
     </div>
+    <p class="vnone" id="vnone" hidden>Ничего не нашлось. Попробуй другое слово.</p>
     <div class="notes">${VIL.notes.map(n => `<article><h3>${esc(n.t)}</h3><p>${esc(n.d)}</p></article>`).join('')}</div>`;
   $('#vq').oninput = e => {
-    const q = e.target.value.trim().toLowerCase();
-    document.querySelectorAll('#vcards .prof').forEach(c => (c.hidden = q && !c.dataset.text.includes(q)));
+    // каждое слово ищем по основе без окончания: «бумага» найдёт «бумаги», «железо» — «железа»
+    // и только с начала слова, чтобы «ёлка» не находилась внутри «щёлкать»
+    $('#vcards').classList.add('filtering'); // при поиске карточки появляются сразу, без лесенки
+    const words = norm(e.target.value).split(/[^a-zа-я0-9]+/).filter(Boolean).map(w => new RegExp('(^|[^a-zа-я0-9])' + stem(w)));
+    let shown = 0;
+    document.querySelectorAll('#vcards .prof').forEach(c => {
+      c.hidden = !words.every(re => re.test(c.dataset.text));
+      if (!c.hidden) shown++;
+    });
+    $('#vnone').hidden = shown > 0;
   };
 }
 
@@ -297,6 +329,7 @@ function route() {
   $('#v-farms').hidden = !!sheet;
   for (const k in SHEETS) $('#v-' + k).hidden = sheet !== k;
   document.querySelectorAll('.tabs a').forEach(a => a.setAttribute('aria-current', (a.dataset.v === (sheet || 'farms')) ? 'page' : 'false'));
+  moveTabPill();
   if (sheet) { stopPlay(); viewer?.setActive(false); document.title = SHEETS[sheet] + ' — Верстак'; return; }
   // размер сцены — до showFarm, чтобы камера вписалась по настоящим пропорциям экрана
   viewer?.setActive(true); viewer?.resize();
@@ -307,8 +340,14 @@ function route() {
 // пиксельный шрифт нужен до первых подписей в 3D
 try { await Promise.race([document.fonts.load('48px Tiny5', 'Жж'), new Promise(r => setTimeout(r, 1500))]); } catch { /* без шрифта тоже работает */ }
 renderVillagers(); renderPotions(); renderTips(); initFarmsView();
+stagger(document, '.tabs a');
+for (const box of document.querySelectorAll('.sheet .cards, .sheet .notes, .sheet .setup, .sheet .facts')) stagger(box);
 addEventListener('hashchange', route);
 route();
+addEventListener('resize', moveTabPill);
+document.fonts.ready.then(moveTabPill);
+// анимация загрузки — только при открытии сайта
+setTimeout(() => document.body.classList.remove('boot'), 1600);
 
 // офлайн и установка на телефон (PWA); в превью без https просто не включится
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && document.querySelector('link[rel=manifest]')) {

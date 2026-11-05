@@ -47,6 +47,37 @@ function cellsOf(en) {
 }
 const ease = t => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
 
+// Трещины при копании: 6 стадий, рисуем сами пиксельными ломаными из центра (не игровая текстура)
+const CRACK_T = .42; // сколько секунд блок трескается до того, как лопнуть
+function crackMats() {
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const px = [], seen = new Set();
+  const put = (x, y) => { const k = x + ',' + y; if (x < 0 || y < 0 || x > 15 || y > 15 || seen.has(k)) return; seen.add(k); px.push([x, y]); };
+  // несколько веток от центра, каждая петляет к краю
+  const arms = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1]];
+  const heads = arms.map(d => ({ x: 7 + (d[0] > 0), y: 7 + (d[1] > 0), d }));
+  for (let step = 0; step < 9; step++) for (const h of heads) {
+    put(h.x, h.y);
+    if (rnd() < .4) h.x += rnd() < .5 ? 1 : -1; else h.x += h.d[0] || (rnd() < .5 ? 1 : -1) * (rnd() < .3);
+    if (rnd() < .4) h.y += rnd() < .5 ? 1 : -1; else h.y += h.d[1] || (rnd() < .5 ? 1 : -1) * (rnd() < .3);
+  }
+  const geo = new THREE.BoxGeometry(1.012, 1.012, 1.012);
+  const mats = [];
+  for (let s = 1; s <= 6; s++) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 16;
+    const g = cv.getContext('2d');
+    px.slice(0, Math.round(px.length * s / 6)).forEach(([x, y], i) => {
+      g.fillStyle = i % 5 === 0 ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.62)';
+      g.fillRect(x, y, 1, 1);
+    });
+    const t = new THREE.CanvasTexture(cv);
+    t.magFilter = t.minFilter = THREE.NearestFilter; t.generateMipmaps = false;
+    mats.push(new THREE.MeshBasicMaterial({ map: t, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  }
+  return { geo, mats };
+}
+
 export class Viewer {
   constructor(host, cb = {}) {
     this.host = host; this.cb = cb;
@@ -73,6 +104,8 @@ export class Viewer {
     this.digCellMat = new THREE.LineBasicMaterial({ color: 0xff8a6a, transparent: true, opacity: .55 });
     this.digFill = new THREE.MeshBasicMaterial({ color: 0xff5a3c, transparent: true, opacity: .16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
     this.pGeo = new THREE.BoxGeometry(.15, .15, .15);
+    this.crack = crackMats();
+    this.dustMat = new THREE.MeshBasicMaterial({ color: 0xd9d2c3, transparent: true, opacity: .55, depthWrite: false });
     this.digRoot = new THREE.Group(); this.root.add(this.digRoot);
     this.anims = []; this.parts = []; this.animEnd = 0; this.dirty = true; this.isOn = true; this.lastDraw = 0;
     this.opt = { ground: 'glass', highlight: true, onlyNew: false, demo: true, cut: null };
@@ -215,8 +248,10 @@ export class Viewer {
     if (fresh.length) {
       fresh.sort((a, b) => (a.userData.en.y - b.userData.en.y) || (a.userData.en.x + a.userData.en.z - b.userData.en.x - b.userData.en.z));
       const gap = Math.min(.07, 1.7 / fresh.length), t0 = digEnd ? digEnd + .2 : now;
-      fresh.forEach((m, i) => { m.scale.setScalar(.001); this.anims.push({ m, t0: t0 + i * gap, dur: .32 }); });
-      this.animEnd = t0 + fresh.length * gap + .32;
+      // пыль при установке: у больших шагов не у каждого блока, чтобы не рябило
+      const every = Math.max(1, Math.ceil(fresh.length / 24));
+      fresh.forEach((m, i) => { m.scale.setScalar(.001); this.anims.push({ m, t0: t0 + i * gap, dur: .3, dust: i % every === 0 && m.userData.en.t !== 'water' }); });
+      this.animEnd = t0 + fresh.length * gap + .3;
     }
     this.refreshVisibility();
     this.buildHighlights();
@@ -262,16 +297,18 @@ export class Viewer {
   startDig(k, t0) {
     const G = this.farm.ground, cells = this.digCells(k);
     if (!cells.length) return 0;
-    const gap = Math.min(.06, 2.4 / cells.length), w = this.world();
+    // мало блоков — копаем почти по одному, много — быстрее, чтобы шаг не тянулся
+    const gap = Math.min(.18, Math.max(.04, 3 / cells.length)), w = this.world();
     cells.forEach(([x, y, z], i) => {
       const kind = y === G.top ? 'grass' : y >= G.top - (G.dirt ?? 3) ? 'dirt' : 'stone';
       const obj = new THREE.Group(), cube = BLOCKS[kind].build({ t: kind, x, y, z, p: {} }, w);
       const edge = new THREE.LineSegments(this.edgeGeo, this.digCellMat); edge.position.set(.5, .5, .5); edge.scale.setScalar(1.01);
-      obj.add(cube, edge); obj.position.set(x, y, z);
-      obj.userData = { tb: t0 + i * gap, kind, cube };
+      const crack = new THREE.Mesh(this.crack.geo, this.crack.mats[0]); crack.position.set(.5, .5, .5); crack.visible = false;
+      obj.add(cube, edge, crack); obj.position.set(x, y, z);
+      obj.userData = { tb: t0 + CRACK_T + i * gap, kind, cube, crack, st: -1, hit: 0 };
       this.digRoot.add(obj);
     });
-    return t0 + (cells.length - 1) * gap + .25;
+    return t0 + CRACK_T + (cells.length - 1) * gap + .25;
   }
   clearDig() {
     this.seq = null; if (this.cur) this.cur.visible = false;
@@ -302,12 +339,27 @@ export class Viewer {
     this.dirty = true;
   }
   breakFx(o) {
-    const t = this.clock.getElapsedTime(), pm = mat(o.userData.kind === 'grass' ? 'grass_top' : o.userData.kind);
-    for (let i = 0; i < 6; i++) {
-      const m = new THREE.Mesh(this.pGeo, pm);
-      m.position.set(o.position.x + .25 + Math.random() * .5, o.position.y + .3 + Math.random() * .5, o.position.z + .25 + Math.random() * .5);
+    const t = this.clock.getElapsedTime(), kind = o.userData.kind;
+    for (let i = 0; i < 10; i++) {
+      // крошки и дёрна, и земли: у травы часть крошек земляная, как у настоящего дёрна
+      const m = new THREE.Mesh(this.pGeo, mat(kind === 'grass' ? (i % 3 ? 'dirt' : 'grass_top') : kind));
+      m.position.set(o.position.x + .2 + Math.random() * .6, o.position.y + .2 + Math.random() * .6, o.position.z + .2 + Math.random() * .6);
+      m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
       this.fxRoot.add(m);
-      this.parts.push({ m, v: new THREE.Vector3((Math.random() - .5) * 2.6, 1.6 + Math.random() * 1.6, (Math.random() - .5) * 2.6), t0: t });
+      this.parts.push({ m, s0: .7 + Math.random() * .6, life: .55 + Math.random() * .25, g: 9.5,
+        spin: new THREE.Vector3((Math.random() - .5) * 9, (Math.random() - .5) * 9, (Math.random() - .5) * 9),
+        v: new THREE.Vector3((Math.random() - .5) * 3, 1.4 + Math.random() * 1.8, (Math.random() - .5) * 3), t0: t });
+    }
+  }
+  // мягкая пыль из-под только что поставленного блока
+  dustFx(m) {
+    const t = this.clock.getElapsedTime(), b = m.userData.base;
+    for (let i = 0; i < 5; i++) {
+      const a = Math.random() * Math.PI * 2, p = new THREE.Mesh(this.pGeo, this.dustMat);
+      p.position.set(b.x + .5 + Math.cos(a) * .45, b.y + .05, b.z + .5 + Math.sin(a) * .45);
+      this.fxRoot.add(p);
+      this.parts.push({ m: p, s0: .8 + Math.random() * .5, life: .45, g: -.6, spin: new THREE.Vector3(0, 2, 0),
+        v: new THREE.Vector3(Math.cos(a) * 1.1, .35 + Math.random() * .3, Math.sin(a) * 1.1), t0: t });
     }
   }
   animLeft() { return Math.max(0, this.animEnd - this.clock.getElapsedTime()); }
@@ -560,25 +612,33 @@ export class Viewer {
     for (const an of this.anims) {
       const u = (t - an.t0) / an.dur; const m = an.m;
       if (u < 0) { m.scale.setScalar(.001); continue; }
-      const v = Math.min(1, u); const s = Math.max(.001, ease(v));
-      m.scale.set(s, s, s); m.position.set(m.userData.base.x + (1 - s) * .5, m.userData.base.y + (1 - v) * .6 + (1 - s) * .5, m.userData.base.z + (1 - s) * .5);
-      if (v >= 1) { m.scale.setScalar(1); m.position.copy(m.userData.base); an.done = true; }
+      // блок ставится: вырастает из половины с лёгким пружинящим перебором и чуть опускается на место
+      const v = Math.min(1, u); const s = .5 + .5 * ease(v);
+      m.scale.set(s, s, s); m.position.set(m.userData.base.x + (1 - s) * .5, m.userData.base.y + (1 - v) * .22 + (1 - s) * .5, m.userData.base.z + (1 - s) * .5);
+      if (v >= 1) { m.scale.setScalar(1); m.position.copy(m.userData.base); an.done = true; if (an.dust && m.visible) this.dustFx(m); }
     }
     this.anims = this.anims.filter(a => !a.done);
-    // копание: блок чуть трясётся, лопается и разлетается крошками
+    // копание: по блоку бьют киркой — трещина растёт, блок вздрагивает от ударов, потом лопается крошками
     for (const o of this.digRoot.children) {
       const d = o.userData; if (d.broken) continue;
       if (t >= d.tb) { d.broken = true; o.visible = false; this.breakFx(o); busy = true; }
-      else if (t >= d.tb - .14) {
-        const j = .035; d.cube.position.set(.5 + (Math.random() - .5) * j, .5 + (Math.random() - .5) * j, .5 + (Math.random() - .5) * j);
+      else if (t >= d.tb - CRACK_T) {
+        const st = Math.min(5, Math.floor((t - d.tb + CRACK_T) / CRACK_T * 6));
+        if (st !== d.st) { d.st = st; d.crack.material = this.crack.mats[st]; d.crack.visible = true; d.hit = t; }
+        const s = 1 - .05 * Math.max(0, 1 - (t - d.hit) / .08);
+        const j = st >= 4 ? .03 : 0;
+        d.cube.scale.setScalar(s); d.crack.scale.setScalar(s);
+        d.cube.position.set(.5 + (Math.random() - .5) * j, .5 + (Math.random() - .5) * j, .5 + (Math.random() - .5) * j); // куб стоит центром в .5
         busy = true;
       }
     }
     const dt = Math.min(.05, t - (this.lastT ?? t)); this.lastT = t;
     if (this.parts.length) busy = true;
     for (const p of this.parts) {
-      const u = (t - p.t0) / .6;
-      p.v.y -= 9.5 * dt; p.m.position.addScaledVector(p.v, dt); p.m.scale.setScalar(Math.max(.01, 1 - u));
+      const u = (t - p.t0) / (p.life ?? .6);
+      p.v.y -= (p.g ?? 9.5) * dt; p.m.position.addScaledVector(p.v, dt);
+      if (p.spin) { p.m.rotation.x += p.spin.x * dt; p.m.rotation.y += p.spin.y * dt; p.m.rotation.z += p.spin.z * dt; }
+      p.m.scale.setScalar(Math.max(.01, (p.s0 ?? 1) * (1 - u * u)));
       if (u >= 1) { this.fxRoot.remove(p.m); p.done = true; }
     }
     this.parts = this.parts.filter(p => !p.done);
