@@ -1,6 +1,6 @@
 // Офлайн-режим: всё складываем в кэш при установке, отдаём из кэша и тихо обновляем из сети.
 // Новая версия сайта — поменяй VERSION, старый кэш удалится.
-const VERSION = 'verstak-4';
+const VERSION = 'verstak-5';
 const FILES = [
   './',
   'app.js',
@@ -35,7 +35,8 @@ const FILES = [
   'vendor/three/three.module.js',
 ];
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // мимо HTTP-кэша браузера: GitHub Pages просит хранить файлы 10 минут, и без этого в новую версию попал бы старый файл
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
@@ -44,7 +45,7 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET' || new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(caches.open(VERSION).then(async c => {
     const hit = await c.match(e.request, { ignoreSearch: true });
-    const net = fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
+    const net = fetch(e.request, { cache: 'no-cache' }).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
     return hit || net;
   }));
 });
