@@ -13,15 +13,47 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const farms = await Promise.all(FARM_IDS.map(id => import(`./farms/${id}.js`).then(m => m.default)));
 let farm = null, viewer = null, playing = null, curK = 1;
 
-/* ---------- анимации интерфейса (сами анимации — в CSS) ---------- */
-// номер по порядку для «лесенки»: карточки появляются друг за другом
+/* ---------- анимации интерфейса ----------
+   Появления — через WAAPI и только на настоящие события (смена фермы, шага, первый заход во вкладку):
+   CSS-анимации перезапускаются после display:none, и при возврате во вкладку всё бы мигало.
+   Только transform/opacity; fill:'backwards', чтобы ничего не залипало в конечном кадре. */
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+const calm = () => RM.matches; // спрашиваем каждый раз: настройку системы могут переключить на ходу
+const PHONE = matchMedia('(max-width: 820px)'), ROW = matchMedia('(max-width: 1180px)');
+const EASE = { out: 'cubic-bezier(.22,1,.36,1)', in: 'cubic-bezier(.4,0,1,1)', spring: 'cubic-bezier(.34,1.56,.64,1)' };
+const KF = {
+  rise: [{ opacity: 0, transform: 'translateY(10px) scale(.99)' }, {}],
+  inR: [{ opacity: 0, transform: 'translateX(14px)' }, {}],
+  inL: [{ opacity: 0, transform: 'translateX(-14px)' }, {}],
+  outL: [{}, { opacity: 0, transform: 'translateX(-12px)' }],
+  outR: [{}, { opacity: 0, transform: 'translateX(12px)' }],
+  chip: [{ opacity: 0, transform: 'translateX(10px) scale(.96)' }, {}],
+  fade: [{ opacity: 0 }, {}],
+  pop: [{ transform: 'scale(1)' }, { transform: 'scale(1.07)', offset: .4 }, { transform: 'scale(1)' }],
+};
+const FADE = [{ opacity: 0 }, {}];
+// «лесенка»: элементы въезжают друг за другом, не дольше 8 шагов задержки
+function enter(els, kf, { dur = 260, step = 35, max = 8, delay = 0, ease = EASE.out } = {}) {
+  [...els].forEach((el, i) => {
+    const d = delay + Math.min(i, max) * step;
+    // без движения: остаётся только короткое проявление
+    if (calm()) el.animate(FADE, { duration: 120, delay: d / 2, fill: 'backwards' });
+    else el.animate(kf, { duration: dur, delay: d, easing: ease, fill: 'backwards' });
+  });
+}
 const stagger = (root, sel = ':scope > *') => root.querySelectorAll(sel).forEach((el, i) => el.style.setProperty('--i', i));
-let shownPanel = null; // какая ферма и шаг сейчас в панели: от этого зависит, как она въезжает
+let booted = false;
+// следующий кадр; если кадры не идут (вкладка в фоне), через 100 мс всё равно
+function nextFrame(fn) { let t = 0; const go = () => { if (!t) return; clearTimeout(t); t = 0; fn(); }; t = setTimeout(go, 100); requestAnimationFrame(go); return 1; }
+// пока тянут окно, плашки прыгают за ним без пружины
+function still(el, fn) { el.classList.add('still'); fn(); requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove('still'))); }
+
 function moveTabPill() {
   const tabs = $('.tabs'), on = tabs.querySelector('a[aria-current="page"]'), pill = tabs.querySelector('.tabpill');
   if (!on || !on.offsetWidth) return;
   pill.style.width = on.offsetWidth + 'px';
-  pill.style.transform = `translateX(${on.offsetLeft}px)`;
+  pill.style.setProperty('--x', on.offsetLeft + 'px');
+  pill.style.transform = 'translateX(var(--x))';
   if (!tabs.classList.contains('ready')) requestAnimationFrame(() => tabs.classList.add('ready'));
 }
 
@@ -41,62 +73,171 @@ function materials(f, only) {
   });
   return out;
 }
-const chips = m => [...m].map(([n, c]) => `<li><span>${esc(n)}</span><b>×${c}</b></li>`).join('');
+const allMats = new WeakMap(); // материалы на всю ферму считаем один раз
+const farmMats = f => allMats.get(f) || (allMats.set(f, materials(f)), allMats.get(f));
+// счётчик ×N «набегает» от нуля (через --n), если браузер умеет анимировать свои свойства
+let COUNT = false;
+try { CSS.registerProperty({ name: '--n', syntax: '<integer>', inherits: false, initialValue: '0' }); COUNT = true; } catch { /* уже есть или не умеет */ }
+if (COUNT) document.documentElement.classList.add('cnt');
+const chips = (m, cnt) => [...m].map(([n, c]) => `<li data-n="${esc(n)}"><span>${esc(n)}</span><b${cnt ? ` style="--n:${c}"` : ''}><span>×${c}</span></b></li>`).join('');
 
-/* ---------- фермы ---------- */
+/* ---------- выбор фермы: рисуем один раз, дальше только переключаем ---------- */
 function renderPicker() {
   $('#picker').innerHTML = farms.map(f => `
-    <a class="pick${f === farm ? ' on' : ''}" href="#${f.id}" aria-current="${f === farm ? 'page' : 'false'}">
+    <a class="pick" href="#${f.id}" data-id="${f.id}" aria-current="false">
       <b>${esc(f.title)}</b><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i>
-    </a>`).join('');
-  stagger($('#picker'));
+    </a>`).join('') + '<span class="pickbar" aria-hidden="true"></span>';
+  stagger($('#picker'), '.pick');
 }
-function renderPanel(k) {
-  const s = farm.steps[k - 1], N = farm.steps.length;
-  const need = materials(farm, k);
-  $('#panel').innerHTML = `
+function syncPicker(scroll) {
+  const box = $('#picker');
+  let on = null;
+  for (const a of box.querySelectorAll('.pick')) {
+    const me = a.dataset.id === farm.id;
+    a.classList.toggle('on', me); a.setAttribute('aria-current', me ? 'page' : 'false');
+    if (me) on = a;
+  }
+  movePickBar();
+  // в строчной раскладке выбранная карточка не должна уехать за край
+  if (scroll && on && ROW.matches) on.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: calm() ? 'auto' : 'smooth' });
+}
+function movePickBar() {
+  const box = $('#picker'), on = box.querySelector('.pick.on'), bar = box.querySelector('.pickbar');
+  if (!on || !on.offsetWidth) return;
+  const row = ROW.matches;
+  bar.style.width = (row ? on.offsetWidth - 8 : 4) + 'px';
+  bar.style.height = (row ? 3 : on.offsetHeight - 16) + 'px';
+  bar.style.transform = `translate(${on.offsetLeft + (row ? 4 : 0)}px, ${on.offsetTop + (row ? on.offsetHeight - 3 : 8)}px)`;
+  if (!box.classList.contains('bar')) still(box, () => box.classList.add('bar'));
+}
+
+/* ---------- панель шагов: каркас — один раз на ферму, на шаге меняется только карточка ---------- */
+let shownK = 0, shownDir = 0, outAnim = null, uiRaf = 0;
+function buildPanel() {
+  const N = farm.steps.length, P = $('#panel');
+  P.innerHTML = `
     <header class="farmhead">
       <h2>${esc(farm.title)}</h2>
       <p>${esc(farm.short)}</p>
       <div class="badges">${farm.badges.map(b => `<span>${esc(b)}</span>`).join('')}</div>
       <dl class="stats">${farm.stats.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl>
     </header>
-    <article class="stepcard" aria-live="polite">
-      <div class="num">Шаг ${k} из ${N}</div>
-      <h3>${esc(s.t)}</h3>
-      <p>${s.d}</p>
-      ${need.size ? `<div class="need"><h4>Ставишь в этом шаге</h4><ul class="chips">${chips(need)}</ul></div>` : ''}
-      ${s.tip ? `<p class="tipbox">${s.tip}</p>` : ''}
+    <article class="stepcard">
+      <div class="prog" style="--n:${N}" aria-hidden="true"><i></i></div>
+      <div class="sbody" aria-live="polite"></div>
       <div class="stepnav">
-        <button class="btn" data-go="${k - 1}" ${k === 1 ? 'disabled' : ''}>← Назад</button>
-        <button class="btn primary" data-go="${k + 1}" ${k === N ? 'disabled' : ''}>Дальше →</button>
+        <button class="btn" id="sPrev" data-go="0">← Назад</button>
+        <button class="btn primary" id="sNext" data-go="2">Дальше →</button>
       </div>
     </article>
     <section class="block">
       <h4>Все шаги</h4>
-      <ol class="steps">${farm.steps.map((x, i) => `<li><button class="${i + 1 === k ? 'on' : ''}" data-go="${i + 1}"><em>${i + 1}</em>${esc(x.t)}</button></li>`).join('')}</ol>
+      <div class="stepswrap still"><span class="steppill" aria-hidden="true"></span>
+        <ol class="steps">${farm.steps.map((x, i) => `<li><button class="${i + 1 < curK ? 'done' : i + 1 === curK ? 'on' : ''}" data-go="${i + 1}"><em>${i + 1}</em><span>${esc(x.t)}</span></button></li>`).join('')}</ol>
+      </div>
     </section>
     <section class="block">
       <h4>Материалы на всю ферму</h4>
-      <ul class="chips all">${chips(materials(farm))}${(farm.extra || []).map(([n, c]) => `<li class="mob"><span>${esc(n)}</span><b>×${c}</b></li>`).join('')}</ul>
+      <ul class="chips all">${chips(farmMats(farm))}${(farm.extra || []).map(([n, c]) => `<li class="mob"><span>${esc(n)}</span><b>×${c}</b></li>`).join('')}</ul>
     </section>`;
-  const p = $('#panel'), was = shownPanel;
-  p.dataset.anim = !was || was.farm !== farm ? 'farm' : k > was.k ? 'next' : k < was.k ? 'prev' : '';
-  if (!p.dataset.anim) delete p.dataset.anim;
-  shownPanel = { farm, k };
-  stagger(p); stagger(p, '.stepcard > *'); stagger(p, '.stepcard .chips li');
+  P.scrollTop = 0;
+  shownK = 0; outAnim = null;
+  stagger(P);
+  if (booted) enter(P.children, KF.rise, { dur: 320, step: 55 });
 }
+function stepBody(k) {
+  const s = farm.steps[k - 1], N = farm.steps.length, need = materials(farm, k);
+  return `<div class="num">Шаг ${k} из ${N}</div>
+    <h3>${esc(s.t)}</h3>
+    <p>${s.d}</p>
+    ${need.size ? `<div class="need"><h4>Ставишь в этом шаге</h4><ul class="chips">${chips(need, COUNT)}</ul></div>` : ''}
+    ${s.tip ? `<p class="tipbox">${s.tip}</p>` : ''}`;
+}
+// dir: 1 — вперёд (въезжает справа), -1 — назад (слева), 0 — без выезда (новая ферма)
+function updateStep(k, dir) {
+  const P = $('#panel'), body = P.querySelector('.sbody'), N = farm.steps.length;
+  shownK = k; shownDir = dir;
+  let swapped = false;
+  const swap = () => {
+    if (swapped) return; swapped = true;
+    const k = shownK, dir = shownDir; // за время выезда могли пролистать дальше — показываем последнее
+    body.innerHTML = stepBody(k);
+    if (outAnim) { outAnim.cancel(); outAnim = null; }
+    if (dir) enter(body.children, dir > 0 ? KF.inR : KF.inL, { step: 30 });
+    const cs = body.querySelectorAll('.chips li');
+    enter(cs, KF.chip, { delay: dir ? 90 : 160, step: 35 });
+    if (COUNT && !calm()) cs.forEach((li, i) => {
+      const b = li.querySelector('b'), n = +b.style.getPropertyValue('--n');
+      b.animate([{ '--n': 0 }, { '--n': n }], { duration: 600, delay: (dir ? 90 : 160) + Math.min(i, 8) * 35, easing: EASE.out, fill: 'backwards' });
+    });
+  };
+  if (outAnim) { /* уже уезжает: въедет сразу последний шаг */ }
+  else if (dir && !calm() && body.firstElementChild) {
+    outAnim = body.animate(dir > 0 ? KF.outL : KF.outR, { duration: 110, easing: EASE.in, fill: 'forwards' });
+    outAnim.onfinish = swap;
+    setTimeout(swap, 250); // если кадры стоят (фоновая вкладка), контент всё равно сменится
+  } else swap();
+  // кнопки — те же элементы: фокус и нажатие не теряются
+  const pv = $('#sPrev'), nx = $('#sNext');
+  pv.dataset.go = k - 1; pv.disabled = k <= 1;
+  nx.dataset.go = k + 1; nx.disabled = k >= N;
+  P.querySelector('.prog').style.setProperty('--p', k / N);
+  P.querySelectorAll('.steps button').forEach((b, i) => {
+    b.classList.toggle('on', i + 1 === k); b.classList.toggle('done', i + 1 < k);
+    if (i + 1 === k) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+  moveStepPill();
+  // в «Материалах на всю ферму» подсвечиваем то, что идёт в этот шаг
+  const need = materials(farm, k);
+  P.querySelectorAll('.chips.all li[data-n]').forEach(li => {
+    const cur = need.has(li.dataset.n), was = li.classList.contains('cur');
+    li.classList.toggle('cur', cur);
+    // один раз «пингуем» рамкой (::after: только transform/opacity)
+    if (cur && !was && !calm()) try { li.animate([{ opacity: .9, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.05, 1.35)' }], { duration: 520, easing: EASE.out, pseudoElement: '::after' }); } catch { /* старый браузер: хватит рамки */ }
+  });
+}
+function moveStepPill() {
+  const wrap = $('#panel .stepswrap'), on = wrap?.querySelector('button.on'), pill = wrap?.querySelector('.steppill');
+  if (!on || !on.offsetHeight) return;
+  pill.style.height = on.offsetHeight + 'px';
+  pill.style.transform = `translateY(${on.offsetTop}px)`;
+  pill.classList.add('shown');
+  if (wrap.classList.contains('still')) requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.remove('still')));
+}
+// 3D начинает анимацию в этом кадре, панель — в следующем: так они не толкаются в одном кадре
 function setStep(k, animate = true, replay = false) {
   if (viewer) { viewer.goto(k, { animate, replay }); curK = viewer.k; }
   else curK = Math.max(1, Math.min(farm.steps.length, k)); // без WebGL шаги всё равно листаются
-  renderPanel(curK);
+  if (!uiRaf) uiRaf = nextFrame(syncUI);
+}
+function syncUI() {
+  if (!uiRaf) return;
+  uiRaf = 0;
+  if (shownK !== curK) updateStep(curK, shownK ? Math.sign(curK - shownK) : 0);
   updateControls();
 }
+
+/* ---------- плашка шага над 3D ---------- */
+let chipK = '';
 function chip() {
   const k = viewer.k, N = farm.steps.length, c = viewer.opt.cut, sc = $('#stepchip');
-  // номер шага подпрыгивает, когда меняется
-  if (sc.dataset.k !== `${farm.id}:${k}`) { sc.dataset.k = `${farm.id}:${k}`; sc.classList.remove('bump'); void sc.offsetWidth; sc.classList.add('bump'); }
-  sc.innerHTML = `<b>${k}/${N}</b> ${esc(farm.steps[k - 1].t)}${c !== null ? ` <i class="cutbadge">срез: до y=${c}</i>` : ''}${viewer.cutReset ? ' <i class="cutbadge ok">срез сброшен, чтобы было видно новое</i>' : ''}`;
+  const n = sc.querySelector('.n'), key = `${farm.id}:${k}`;
+  sc.querySelector('.t').textContent = farm.steps[k - 1].t;
+  if (chipK !== key) {
+    // номер перелистывается только когда шаг правда сменился: снизу вперёд, сверху назад
+    const same = chipK.startsWith(farm.id + ':'), up = same && k > +chipK.split(':')[1];
+    chipK = key; n.textContent = `${k}/${N}`;
+    if (same && !calm()) n.animate([{ transform: `translateY(${up ? 70 : -70}%)`, opacity: 0 }, { transform: `translateY(${up ? -10 : 10}%)`, opacity: 1, offset: .6 }, { transform: 'none' }], { duration: 340, easing: EASE.out });
+  }
+  badge(sc.querySelector('.cv'), c !== null, `срез: до y=${c}`);
+  badge(sc.querySelector('.cr'), !!viewer.cutReset);
+  badge(sc.querySelector('.ca'), !!viewer.cutAuto);
+}
+function badge(el, show, text) {
+  if (text !== undefined && show && el.textContent !== text) el.textContent = text;
+  if (el.hidden === !show) return;
+  el.hidden = !show;
+  if (show) el.animate(calm() ? FADE : [{ opacity: 0, transform: 'scale(.9)' }, {}], { duration: 160, easing: EASE.out });
 }
 function updateControls() {
   if (!viewer) return;
@@ -129,22 +270,44 @@ function showFarm(f) {
       const gm = f.ground?.mode || 'glass';
       document.querySelectorAll('[name=ground]').forEach(r => (r.checked = r.value === gm));
       viewer.set({ cut: f.cut ?? null, ground: gm });
-    }
-    renderPicker();
-    setStep(f.steps.length, false);
+      viewer.goto(f.steps.length, { animate: false }); curK = viewer.k;
+    } else curK = f.steps.length;
+    // новая ферма — сразу, без кадра с пустой карточкой
+    uiRaf = 0;
+    buildPanel(); updateStep(curK, 0); updateControls();
+    syncPicker(true);
   }
   document.title = `${f.title} — Верстак`;
 }
-function stopPlay() { if (playing) { clearTimeout(playing); playing = null; $('#play').textContent = '▶ Собрать с нуля'; } }
+
+/* ---------- «Собрать с нуля» ---------- */
+function playLabel(t) {
+  const b = $('#play'), s = b.querySelector('span');
+  s.textContent = t;
+  if (!calm()) s.animate([{ opacity: 0, transform: 'translateY(4px)' }, {}], { duration: 160, easing: EASE.out });
+}
+function stopPlay(done) {
+  if (!playing) return;
+  clearTimeout(playing); playing = null;
+  const b = $('#play');
+  b.classList.remove('playing'); b.setAttribute('aria-pressed', 'false');
+  playLabel('▶ Собрать с нуля');
+  if (done && !calm()) { b.animate(KF.pop, { duration: 360, easing: EASE.spring }); $('#panel .prog')?.animate(KF.pop, { duration: 360, easing: EASE.spring }); }
+  setTimeout(() => { if (!playing) b.style.setProperty('--p', 0); }, 300);
+}
 function play() {
   if (playing) return stopPlay();
-  $('#play').textContent = '■ Стоп';
+  const b = $('#play'), N = farm.steps.length;
+  b.classList.add('playing'); b.setAttribute('aria-pressed', 'true');
+  playLabel('■ Стоп');
   setStep(1, true, true);
+  b.style.setProperty('--p', 1 / N);
   // следующий шаг — когда докопали и достроили текущий
   const wait = () => Math.max(2200, viewer.animLeft() * 1000 + 1100);
   const tick = () => {
-    if (viewer.k >= farm.steps.length) return stopPlay();
+    if (viewer.k >= farm.steps.length) return stopPlay(true);
     setStep(viewer.k + 1, true);
+    b.style.setProperty('--p', viewer.k / N);
     playing = setTimeout(tick, wait());
   };
   playing = setTimeout(tick, wait());
@@ -152,10 +315,14 @@ function play() {
 
 function initFarmsView() {
   const tip = $('#tip');
+  let tipOff = 0, tipHTML = '';
+  renderPicker();
   try {
     viewer = new Viewer($('#viewport'), {
       onHover: (h, e) => {
-        if (!h) { tip.hidden = true; return; }
+        // между блоками подсказка не мигает: прячем с маленькой задержкой
+        clearTimeout(tipOff);
+        if (!h) { tipOff = setTimeout(() => tip.classList.remove('show'), 60); return; }
         let html;
         if (h.en) {
           const lv = farm.levels?.[h.en.y];
@@ -169,12 +336,13 @@ function initFarmsView() {
             : G.dirt === 0 ? 'ровная площадка под постройкой' : 'не копай: это стенка постройки';
           html = `<b>${name} (природный)</b><span>x${x} y${y} z${z}${lv ? ' · ' + esc(lv) : ''}</span><span>${note}</span>`;
         }
+        if (html !== tipHTML) tip.innerHTML = tipHTML = html;
         const r = $('#viewport').getBoundingClientRect();
-        tip.innerHTML = html; tip.hidden = false;
-        tip.style.left = Math.min(e.clientX - r.left + 14, r.width - 230) + 'px';
-        tip.style.top = Math.max(e.clientY - r.top - 12, 8) + 'px';
+        const x = Math.min(e.clientX - r.left + 14, r.width - 230), y = Math.max(e.clientY - r.top - 12, 8);
+        tip.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        tip.classList.add('show');
       },
-      onPick: h => { if (h.en) setStep(h.en.step, false); else if (h.ent) setStep(h.ent.step, false); },
+      onPick: h => { const k = h.en ? h.en.step : h.ent?.step; if (k) { stopPlay(); if (k !== viewer.k) setStep(k, false); } }, // свой шаг не трогаем: сбился бы «по одному блоку»
     });
   } catch (err) {
     // без WebGL остаются шаги, материалы и шпаргалки: не роняем весь модуль
@@ -185,11 +353,22 @@ function initFarmsView() {
     document.querySelector('.controls').style.display = 'none';
   }
   if (viewer) initControls();
-  $('#panel').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b && !b.disabled) { stopPlay(); const k = +b.dataset.go; setStep(k, k === curK + 1); } });
+  $('#panel').addEventListener('click', e => {
+    const b = e.target.closest('[data-go]');
+    if (!b || b.disabled) return;
+    stopPlay();
+    // «Назад»/«Дальше» считаем от текущего шага: панель обновляется кадром позже, и data-go может отставать
+    const k = b.id === 'sNext' ? curK + 1 : b.id === 'sPrev' ? curK - 1 : +b.dataset.go;
+    if (k === curK || k < 1 || k > farm.steps.length) return;
+    setStep(k, k === curK + 1);
+    // на телефоне карточка шага выше списка: подъезжаем к ней, иначе кажется, что ничего не случилось
+    if (b.closest('.steps') && PHONE.matches) $('#panel .stepcard').scrollIntoView({ block: 'start', behavior: calm() ? 'auto' : 'smooth' });
+  });
   addEventListener('keydown', e => {
-    if ($('#v-farms').hidden || e.target.closest('input, textarea')) return;
-    if (e.key === 'ArrowRight') { stopPlay(); setStep(curK + 1, true); }
-    if (e.key === 'ArrowLeft') { stopPlay(); setStep(curK - 1, false); }
+    if ($('#v-farms').hidden || e.target.closest?.('input, textarea')) return;
+    // на краях ничего не делаем: нечего перестраивать
+    if (e.key === 'ArrowRight' && curK < farm.steps.length) { stopPlay(); setStep(curK + 1, true); }
+    if (e.key === 'ArrowLeft' && curK > 1) { stopPlay(); setStep(curK - 1, false); }
   });
 }
 function initControls() {
@@ -203,10 +382,21 @@ function initControls() {
   $('#bNext').onclick = () => blkGo(+$('#bScrub').value + 1);
   $('#replay').onclick = () => { stopPlay(); setStep(viewer.k, true, true); };
   $('#demoBtn').onclick = () => { setOpt({ demo: !viewer.opt.demo }); $('#demoBtn').setAttribute('aria-pressed', viewer.opt.demo); };
-  $('#cut').oninput = () => { const v = +$('#cut').value; viewer.cutReset = false; setOpt({ cut: v >= +$('#cut').max ? null : v }); showCut(); chip(); };
+  // ползунок шлёт input чаще кадров: применяем не больше раза за кадр
+  let cutRaf = 0;
+  $('#cut').oninput = () => {
+    if (cutRaf) return;
+    cutRaf = requestAnimationFrame(() => {
+      cutRaf = 0;
+      const v = +$('#cut').value;
+      viewer.cutReset = false;
+      try { viewer.cutAuto = false; } catch { /* движок мог сделать его только для чтения */ }
+      setOpt({ cut: v >= +$('#cut').max ? null : v }); showCut(); chip();
+    });
+  };
   $('#hl').onchange = e => setOpt({ highlight: e.target.checked });
   $('#onlyNew').onchange = e => setOpt({ onlyNew: e.target.checked });
-  document.querySelectorAll('[name=ground]').forEach(r => (r.onchange = () => setOpt({ ground: r.value })));
+  document.querySelectorAll('[name=ground]').forEach(r => (r.onchange = () => { setOpt({ ground: r.value }); chip(); }));
   $('#viewIso').onclick = () => viewer.fit('iso');
   $('#viewTop').onclick = () => viewer.fit('top');
 }
@@ -243,14 +433,15 @@ function renderVillagers() {
   $('#vq').oninput = e => {
     // каждое слово ищем по основе без окончания: «бумага» найдёт «бумаги», «железо» — «железа»
     // и только с начала слова, чтобы «ёлка» не находилась внутри «щёлкать»
-    $('#vcards').classList.add('filtering'); // при поиске карточки появляются сразу, без лесенки
     const words = norm(e.target.value).split(/[^a-zа-я0-9]+/).filter(Boolean).map(w => new RegExp('(^|[^a-zа-я0-9])' + stem(w)));
     let shown = 0;
     document.querySelectorAll('#vcards .prof').forEach(c => {
       c.hidden = !words.every(re => re.test(c.dataset.text));
       if (!c.hidden) shown++;
     });
-    $('#vnone').hidden = shown > 0;
+    const none = $('#vnone'), was = none.hidden;
+    none.hidden = shown > 0;
+    if (was && !none.hidden) enter([none], KF.rise);
   };
 }
 
@@ -291,7 +482,18 @@ function renderPotions() {
     $('#brewtree').innerHTML = brewNode(k, new Set(), true) +
       `<div class="mods2"><b>Дальше можно усилить</b>${BREW.mods.map(([k2, d]) => `<div class="modrow"><span>+ ${esc(d)}</span>${brewNode(k2, new Set([k]), false)}</div>`).join('')}</div>`;
   };
-  $('#v-potions').addEventListener('click', e => { const b = e.target.closest('[data-brew]'); if (b) pick(b.dataset.brew); });
+  $('#v-potions').addEventListener('click', e => {
+    const b = e.target.closest('[data-brew]'); if (!b) return;
+    if (b.getAttribute('aria-pressed') === 'true') return;
+    pick(b.dataset.brew);
+    if (!calm()) b.animate(KF.pop, { duration: 300, easing: EASE.spring });
+    enter([$('#brewtree')], KF.fade, { dur: 180 });
+  });
+  // раскрытый узел дерева мягко выезжает (только по клику, а не при каждом заходе во вкладку)
+  $('#brewtree').addEventListener('click', e => {
+    const d = e.target.closest('summary')?.parentElement;
+    if (d && !d.open) requestAnimationFrame(() => { const w = d.querySelector(':scope > .ways'); if (d.open && w) enter([w], KF.rise, { dur: 240 }); });
+  });
   pick('weakness');
 }
 
@@ -322,6 +524,20 @@ function renderTips() {
 }
 
 /* ---------- маршрут ---------- */
+// первый заход во вкладку — карточки лесенкой, дальше — одно короткое проявление
+const seen = new Set();
+let curView = '';
+function viewIn(v) {
+  if (v === curView) return;
+  curView = v;
+  const sec = $('#v-' + v);
+  if (seen.has(v)) return enter([sec], KF.fade, { dur: 160 });
+  seen.add(v);
+  if (v === 'farms') return booted && enter([sec], KF.fade, { dur: 200 });
+  const els = [];
+  for (const el of sec.children) el.matches('.cards, .notes, .setup, .facts') ? els.push(...el.children) : els.push(el);
+  enter(els.slice(0, 9), KF.rise, { dur: 300, step: 40, delay: booted ? 0 : 120 });
+}
 function route() {
   const h = location.hash.slice(1);
   const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы' };
@@ -330,24 +546,35 @@ function route() {
   for (const k in SHEETS) $('#v-' + k).hidden = sheet !== k;
   document.querySelectorAll('.tabs a').forEach(a => a.setAttribute('aria-current', (a.dataset.v === (sheet || 'farms')) ? 'page' : 'false'));
   moveTabPill();
+  viewIn(sheet || 'farms');
   if (sheet) { stopPlay(); viewer?.setActive(false); document.title = SHEETS[sheet] + ' — Верстак'; return; }
   // размер сцены — до showFarm, чтобы камера вписалась по настоящим пропорциям экрана
   viewer?.setActive(true); viewer?.resize();
   const f = farms.find(x => x.id === h) || farm || farms[0];
   $('#tabFarms').href = '#' + f.id;
   showFarm(f);
+  // пока вкладка была скрыта, мерить было нечего
+  movePickBar(); moveStepPill();
 }
 // пиксельный шрифт нужен до первых подписей в 3D
 try { await Promise.race([document.fonts.load('48px Tiny5', 'Жж'), new Promise(r => setTimeout(r, 1500))]); } catch { /* без шрифта тоже работает */ }
 renderVillagers(); renderPotions(); renderTips(); initFarmsView();
-stagger(document, '.tabs a');
-for (const box of document.querySelectorAll('.sheet .cards, .sheet .notes, .sheet .setup, .sheet .facts')) stagger(box);
 addEventListener('hashchange', route);
 route();
-addEventListener('resize', moveTabPill);
-document.fonts.ready.then(moveTabPill);
-// анимация загрузки — только при открытии сайта
-setTimeout(() => document.body.classList.remove('boot'), 1600);
+addEventListener('resize', () => still($('.tabs'), () => {
+  moveTabPill();
+  still($('#picker'), movePickBar);
+  const w = $('#panel .stepswrap'); if (w) still(w, moveStepPill);
+}));
+document.fonts.ready.then(() => { moveTabPill(); movePickBar(); moveStepPill(); });
+// анимация загрузки: всё уже на месте и в нужном шрифте — играем одну общую постановку
+document.documentElement.classList.remove('pre'); document.documentElement.classList.add('boot');
+booted = true;
+setTimeout(() => document.documentElement.classList.remove('boot'), 1100);
+// iOS включает :active только если на странице есть touchstart
+document.addEventListener('touchstart', () => {}, { passive: true });
+// свернули вкладку — «Собрать с нуля» не листает шаги в фоне
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopPlay(); });
 
 // офлайн и установка на телефон (PWA); в превью без https просто не включится
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && document.querySelector('link[rel=manifest]')) {

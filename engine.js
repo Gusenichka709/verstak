@@ -1,11 +1,12 @@
 // 3D-просмотрщик построек: шаги, анимация появления блоков, грунт, срез по слоям, демо.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BLOCKS, ENTS, DIRS, FACES, mat, maskGeo, label, setAniso } from './blocks.js';
+import { BLOCKS, ENTS, DIRS, FACES, mat, maskGeo, label, setAniso, pistonExt } from './blocks.js';
 
 const K = (x, y, z) => `${x},${y},${z}`;
 const waterH = e => (e.p.src ? .875 : .72);
 const TINT = new THREE.Color();
+const M4 = new THREE.Matrix4(), ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 // Углы граней клетки (против часовой снаружи) и их UV: +x, −x, +y, −y, +z, −z
 const QUAD = [
   [[1, 0, 1, 0, 0], [1, 0, 0, 1, 0], [1, 1, 0, 1, 1], [1, 1, 1, 0, 1]],
@@ -15,7 +16,9 @@ const QUAD = [
   [[0, 0, 1, 0, 0], [1, 0, 1, 1, 0], [1, 1, 1, 1, 1], [0, 1, 1, 0, 1]],
   [[1, 0, 0, 0, 0], [0, 0, 0, 1, 0], [0, 1, 0, 1, 1], [1, 1, 0, 0, 1]],
 ];
-const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// «Уменьшить движение» читаем каждый раз: настройку могут поменять, не перезагружая страницу
+const RM = matchMedia('(prefers-reduced-motion: reduce)');
+export const reducedMotion = () => RM.matches;
 
 export function expandPut(e) {
   const t = e[0];
@@ -45,7 +48,23 @@ function cellsOf(en) {
   const rel = def.cells ? def.cells(en) : [[0, 0, 0]];
   return rel.map(([dx, dy, dz]) => [en.x + dx, en.y + dy, en.z + dz]);
 }
-const ease = t => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
+
+/* ---------- кривые анимаций ---------- */
+const clamp01 = v => (v < 0 ? 0 : v > 1 ? 1 : v);
+const outCubic = t => 1 - (1 - t) ** 3;
+const inOutCubic = t => (t < .5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+const outBack = (t, s = 1.7) => 1 + (s + 1) * (t - 1) ** 3 + s * (t - 1) ** 2;
+const smooth = t => t * t * (3 - 2 * t);
+// затухающая пружина: 1 в момент удара, к концу ~0
+const wobble = (b, k = 4.5, f = 2.5) => Math.exp(-k * b) * Math.cos(b * Math.PI * f);
+
+// как блок появляется: плоское и мелкое выпрыгивает, жидкость наливается, остальное падает сверху
+const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'bamboo_shoot', 'mark', 'iron_door']);
+const FILL = new Set(['water', 'lava']);
+const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35 };
+const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42 }; // доля времени, когда «приземлился»: пыль и рамка
+const LEAVE = new Set(['out', 'entOut']);
+const kindOf = en => (FILL.has(en.t) ? 'fill' : POP.has(en.t) ? 'pop' : 'drop');
 
 // Трещины при копании: 6 стадий, рисуем сами пиксельными ломаными из центра (не игровая текстура)
 const CRACK_T = .42; // сколько секунд блок трескается до того, как лопнуть
@@ -77,13 +96,25 @@ function crackMats() {
   }
   return { geo, mats };
 }
+// материалы грунта: у дёрна верх травяной, низ земляной; в «прозрачном» режиме они полупрозрачные
+const GLASS_GROUND = { transparent: true, opacity: .5, depthWrite: false };
+function groundMats(kind, glass) {
+  const o = glass ? GLASS_GROUND : {};
+  if (kind !== 'grass') return mat(kind, o);
+  const s = mat('grass_side', o);
+  return [s, s, mat('grass_top', o), mat('dirt', o), s, s];
+}
 
 export class Viewer {
   constructor(host, cb = {}) {
     this.host = host; this.cb = cb;
-    const r = this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    r.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
-    setAniso(r.capabilities.getMaxAnisotropy());
+    // на экранах с плотными пикселями сглаживание почти незаметно, а стоит дорого
+    const hiDpi = (devicePixelRatio || 1) >= 2, coarse = matchMedia('(pointer: coarse)').matches;
+    const r = this.renderer = new THREE.WebGLRenderer({ antialias: !hiDpi, alpha: true, powerPreference: 'high-performance' });
+    // чёткость подстраивается под телефон: если кадры не успевают, движок сам снизит её (см. adapt)
+    this.dprMax = this.dpr = Math.min(devicePixelRatio || 1, 2); this.slow = 0;
+    r.setPixelRatio(this.dpr);
+    setAniso(coarse ? Math.min(4, r.capabilities.getMaxAnisotropy()) : r.capabilities.getMaxAnisotropy());
     r.outputColorSpace = THREE.SRGBColorSpace;
     host.appendChild(r.domElement);
     r.domElement.setAttribute('aria-label', '3D-схема постройки: тяни, чтобы вращать, колесо — приблизить');
@@ -91,7 +122,8 @@ export class Viewer {
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 600);
     const c = this.controls = new OrbitControls(this.camera, r.domElement);
     c.enableDamping = true; c.dampingFactor = .09; c.screenSpacePanning = true; c.maxPolarAngle = Math.PI * .96;
-    c.addEventListener('start', () => { c.autoRotate = false; this.userMoved = true; });
+    // тянешь сцену — перелёт камеры уступает руке
+    c.addEventListener('start', () => { c.autoRotate = false; this.userMoved = true; this.tween = null; });
     c.addEventListener('change', () => { this.dirty = true; });
     // ламп нет: каждая грань затеняется по своему направлению (см. shadeHook в blocks.js)
     this.root = new THREE.Group(); this.scene.add(this.root);
@@ -103,11 +135,20 @@ export class Viewer {
     this.digMat = new THREE.LineBasicMaterial({ color: 0xff6a4d, transparent: true, opacity: .9 });
     this.digCellMat = new THREE.LineBasicMaterial({ color: 0xff8a6a, transparent: true, opacity: .55 });
     this.digFill = new THREE.MeshBasicMaterial({ color: 0xff5a3c, transparent: true, opacity: .16, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    this.boxMat = new THREE.LineBasicMaterial({ color: 0xcdbf9f, transparent: true, opacity: .22, depthWrite: false });
+    // кольцо под новым мобом или лодкой — та же золотая «новинка», что рамки у блоков
+    this.ringGeo = new THREE.RingGeometry(.4, .5, 28); this.ringGeo.rotateX(-Math.PI / 2);
+    this.ringMat = new THREE.MeshBasicMaterial({ color: 0xffc94d, transparent: true, opacity: .9, depthWrite: false, side: THREE.DoubleSide });
     this.pGeo = new THREE.BoxGeometry(.15, .15, .15);
+    this.digGeo = new THREE.BoxGeometry(1, 1, 1);
     this.crack = crackMats();
     this.dustMat = new THREE.MeshBasicMaterial({ color: 0xd9d2c3, transparent: true, opacity: .55, depthWrite: false });
+    this.flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: .7, depthWrite: false });
     this.digRoot = new THREE.Group(); this.root.add(this.digRoot);
-    this.anims = []; this.parts = []; this.animEnd = 0; this.dirty = true; this.isOn = true; this.lastDraw = 0;
+    this.anims = []; this.parts = []; this.pool = []; this.hlAnims = []; this.pending = new Set(); this.digs = [];
+    // своё время анимаций: идёт, только пока сцену рисуют (вкладка шпаргалок, скрытый браузер — пауза)
+    this.at = 0; this.demoT0 = 0;
+    this.animEnd = 0; this.dirty = true; this.isOn = true; this.onScreen = true; this.lastDraw = 0;
     this.opt = { ground: 'glass', highlight: true, onlyNew: false, demo: true, cut: null };
     this.clock = new THREE.Clock();
     this.ray = new THREE.Raycaster(); this.ptr = new THREE.Vector2(); this.lastPick = 0;
@@ -116,7 +157,10 @@ export class Viewer {
     r.domElement.addEventListener('pointerdown', e => { this.down = [e.clientX, e.clientY]; });
     r.domElement.addEventListener('click', e => { if (this.down && Math.hypot(e.clientX - this.down[0], e.clientY - this.down[1]) < 6) this.onClick(e); });
     new ResizeObserver(() => this.resize()).observe(host);
+    // сцена ушла за край экрана (на телефоне прокрутили к шагам) — не рисуем
+    if ('IntersectionObserver' in window) new IntersectionObserver(([en]) => { this.onScreen = en.isIntersecting; if (this.onScreen) this.dirty = true; }).observe(host);
     this.resize();
+    this.warmFx();
     this.loop = () => this.frame();
     r.setAnimationLoop(this.loop);
   }
@@ -135,20 +179,36 @@ export class Viewer {
 
   resize() {
     const w = this.host.clientWidth || 1, h = this.host.clientHeight || 1;
+    if (w === this.w && h === this.h && this.dpr === this.sizedDpr) return;
+    this.w = w; this.h = h; this.sizedDpr = this.dpr;
     this.renderer.setSize(w, h, false);
     this.renderer.domElement.style.width = w + 'px'; this.renderer.domElement.style.height = h + 'px';
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
     this.dirty = true;
   }
+  // шейдеры эффектов собираем заранее: иначе первый удар киркой или первая пыль дают рывок
+  warmFx() {
+    const g = new THREE.Group();
+    for (const m of [...this.crack.mats, this.dustMat, this.flashMat, this.ringMat, this.digFill]) g.add(new THREE.Mesh(this.pGeo, m));
+    for (const k of ['grass', 'dirt', 'stone']) for (const glass of [false, true]) {
+      g.add(new THREE.Mesh(this.digGeo, groundMats(k, glass)));
+      g.add(new THREE.InstancedMesh(this.digGeo, groundMats(k, glass), 1));
+    }
+    for (const m of [this.hlMat, this.digMat, this.digCellMat, this.boxMat]) g.add(new THREE.LineSegments(this.edgeGeo, m));
+    this.scene.add(g); this.renderer.compile(this.scene, this.camera); this.scene.remove(g);
+  }
 
   /* ---------- загрузка фермы ---------- */
   setFarm(farm) {
     this.disposeActors();
-    for (const g of [this.blockRoot, this.entRoot, this.fxRoot, this.actorRoot, this.groundRoot, this.digRoot]) g.clear();
+    this.clearDig();
+    for (const g of [this.blockRoot, this.entRoot, this.fxRoot, this.actorRoot, this.digRoot]) g.clear();
+    this.dropGroundCache();
     // состояние прошлой фермы не должно дожить до новой (иначе buildHighlights читает шаг 0)
-    this.parts = []; this.anims = []; this.tween = null; this.active = null; this.seq = null; this.sub = null; this.cutReset = false;
+    this.anims = []; this.hlAnims = []; this.pending = new Set(); this.tween = null; this.active = null; this.seq = null; this.sub = null;
+    this.cutReset = false; this.cutAuto = false; this.animEnd = 0; this.demoT0 = this.at;
     if (this.cur) this.cur.visible = false;
-    this.farm = farm; this.meshes = new Map(); this.entMeshes = new Map(); this.actors = null;
+    this.farm = farm; this.meshes = new Map(); this.entMeshes = new Map(); this.actors = null; this.pistons = [];
     this.entries = []; this.hist = new Map(); this.dig = new Map(); this.ents = [];
     farm.steps.forEach((s, i) => {
       const step = i + 1;
@@ -164,6 +224,12 @@ export class Viewer {
     for (const [k, ids] of this.hist) { const top = this.entries[ids[ids.length - 1]]; if (top.t !== 'air') this.finalAt.set(k, top); }
     this.N = farm.steps.length;
     this.k = 0;
+    this.prepGround();
+    // все модели строим сразу и прогреваем шейдеры: потом шаги листаются без рывков
+    for (const en of this.entries) if (en.t !== 'air') this.meshFor(en).visible = false;
+    for (const e of this.ents) this.entFor(e).visible = false;
+    if (farm.demo) { this.buildActors(); this.actors.forEach(x => (x.obj.visible = false)); }
+    this.renderer.compile(this.scene, this.camera);
     this.fit();
     this.dirty = true;
   }
@@ -208,7 +274,8 @@ export class Viewer {
     obj.add(BLOCKS[en.t].build(en, this.world()));
     obj.position.set(en.x, en.y, en.z);
     obj.userData = { en, base: obj.position.clone() };
-    obj.traverse(o => { o.userData.en = en; if (o.userData.cull) obj.userData.cm = o; });
+    obj.traverse(o => { o.userData.en = en; if (o.userData.cull) obj.userData.cm = o; if (o.userData.pistonHead) obj.userData.head = o; });
+    if (obj.userData.head) this.pistons.push(obj);
     this.blockRoot.add(obj); this.meshes.set(en.id, obj);
     return obj;
   }
@@ -217,46 +284,164 @@ export class Viewer {
     const obj = ENTS[e.e].build(e.o || {});
     obj.position.set(e.x, e.y, e.z); obj.rotation.y = e.yaw || 0;
     obj.traverse(o => { o.userData.ent = e; });
+    // у моба точка опоры — середина низа, у блока — угол клетки
+    // радиус кольца «новое» — по габаритам: у лодки оно шире, чем у фишки жителя
+    const sz = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
+    Object.assign(obj.userData, { ent: e, isEnt: true, base: obj.position.clone(), yaw: e.yaw || 0, rad: Math.max(sz.x, sz.z) / 2 + .12 });
     this.entRoot.add(obj); this.entMeshes.set(e.id, obj);
     return obj;
   }
+  entOn(e, k) { return e.step <= k && (!e.until || k < e.until); }
 
   /* ---------- шаги ---------- */
   goto(k, { animate = true, replay = false } = {}) {
     k = Math.max(1, Math.min(this.N, k));
+    // тот же шаг (стрелка у края, клик по блоку этого шага) — ничего не перестраиваем
+    if (k === this.k && !replay && this.active) { this.cb.onStep && this.cb.onStep(k); return; }
     const prev = this.k; this.k = k;
-    // срез не должен прятать то, что ставится или копается в этом шаге
-    this.cutReset = false;
-    if (this.opt.cut !== null) { const sb = this.stepBounds(k); if (sb && sb.max.y - 1 > this.opt.cut) { this.opt.cut = null; this.cutReset = true; } }
+    const reduced = RM.matches;
+    this.fitCut(k);
+    this.finishAnims();
     this.active = this.activeAt(k);
-    const fwd = animate && !REDUCED && (k === prev + 1 || replay);
-    const fresh = [];
+    const fwd = animate && !reduced && (k === prev + 1 || replay);
+    // шаг назад: то, что поставили в отменённом шаге, разлетается, а не исчезает молча
+    const back = !reduced && k === prev - 1;
+    const fresh = [], leaving = [], entsIn = [], entsOut = [];
     for (const en of this.entries) {
-      const on = this.active.has(en.id);
-      if (!on) { if (this.meshes.has(en.id)) this.meshes.get(en.id).visible = false; continue; }
-      const m = this.meshFor(en);
-      m.visible = true; m.userData.demoHidden = false; m.scale.setScalar(1); m.position.copy(m.userData.base);
+      if (en.t === 'air') continue;
+      const m = this.meshFor(en), was = m.visible;
+      this.poseReset(m); m.userData.demoHidden = false;
+      if (!this.active.has(en.id)) { m.visible = false; if (back && was) leaving.push(m); continue; }
+      m.visible = true;
       if (fwd && en.step === k) fresh.push(m);
     }
-    this.anims = []; this.sub = null;
+    for (const e of this.ents) {
+      const m = this.entFor(e), was = m.visible, on = this.entOn(e, k);
+      this.poseReset(m);
+      if (on && fwd && e.step === k) entsIn.push(m);
+      // лодку ломают, моба уводят: шаг, где он пропадает, и шаг назад — с анимацией
+      else if (!on && was && (back || (fwd && e.until === k))) entsOut.push(m);
+    }
+    this.anims = []; this.sub = null; this.pending = new Set();
     this.clearDig();
     this.buildGround();
-    // сначала по одному ломаются блоки грунта, потом по одному появляются новые
-    const now = this.clock.getElapsedTime();
-    const digEnd = fwd ? this.startDig(k, now + (replay ? .15 : .4)) : 0;
-    this.animEnd = digEnd;
+    // сначала по одному ломаются блоки грунта, потом по одному появляются новые, потом прибегают мобы
+    const now = this.at;
+    const digEnd = fwd ? this.startDig(k, now + (replay ? .15 : .35)) : 0;
+    let end = digEnd;
     if (fresh.length) {
-      fresh.sort((a, b) => (a.userData.en.y - b.userData.en.y) || (a.userData.en.x + a.userData.en.z - b.userData.en.x - b.userData.en.z));
-      const gap = Math.min(.07, 1.7 / fresh.length), t0 = digEnd ? digEnd + .2 : now;
+      // волна: блоки одного слоя и одной диагонали падают почти вместе, снизу вверх
+      const key = m => m.userData.en.y * 100 + m.userData.en.x + m.userData.en.z;
+      fresh.sort((a, b) => key(a) - key(b));
+      const gap = Math.min(.08, 1.6 / fresh.length), t0 = digEnd ? digEnd + .1 : now + .05;
       // пыль при установке: у больших шагов не у каждого блока, чтобы не рябило
-      const every = Math.max(1, Math.ceil(fresh.length / 24));
-      fresh.forEach((m, i) => { m.scale.setScalar(.001); this.anims.push({ m, t0: t0 + i * gap, dur: .3, dust: i % every === 0 && m.userData.en.t !== 'water' }); });
-      this.animEnd = t0 + fresh.length * gap + .3;
+      const every = Math.max(1, Math.ceil(fresh.length / 18));
+      fresh.forEach((m, i) => { const kind = kindOf(m.userData.en); this.addAnim(m, kind, t0 + i * gap, { dust: kind === 'drop' && i % every === 0 }); });
+      end = t0 + (fresh.length - 1) * gap + DUR.fill;
     }
+    if (entsIn.length) {
+      const t0 = fresh.length ? end - .2 : digEnd ? digEnd + .1 : now + .1;
+      entsIn.forEach((m, i) => this.addAnim(m, 'entIn', t0 + i * .2, { dust: true }));
+      end = t0 + (entsIn.length - 1) * .2 + DUR.entIn;
+    }
+    this.animEnd = end;
+    // демо последнего шага начинается с начала цикла и только когда постройка встала
+    this.demoT0 = Math.max(now, end) + (fwd ? .35 : 0);
     this.refreshVisibility();
+    // уходящие блоки и мобы: сверху вниз, быстро, параллельно с камерой
+    leaving.sort((a, b) => b.userData.en.y - a.userData.en.y);
+    const lg = Math.min(.03, .5 / Math.max(1, leaving.length));
+    leaving.forEach((m, i) => { m.visible = true; this.addAnim(m, 'out', now + i * lg); });
+    entsOut.forEach(m => { m.visible = true; this.addAnim(m, 'entOut', now); });
     this.buildHighlights();
     if (prev && prev !== k) { const sb = this.stepBounds(k); if (sb && k !== this.N) this.focusOn(sb); else this.fit('keep'); }
     this.cb.onStep && this.cb.onStep(k);
+  }
+  // срез сам подстраивается под шаг: поднимается, если новое выше, и опускается в «сплошном» грунте,
+  // если всё новое закопано (подвал фермы железа). Свой автосрез снимаем, когда он больше не нужен.
+  fitCut(k) {
+    const sb = this.stepBounds(k), G = this.farm.ground;
+    this.cutReset = false;
+    if (this.cutAuto) { this.opt.cut = null; this.cutAuto = false; }
+    if (this.opt.cut !== null && sb && sb.max.y - 1 > this.opt.cut) { this.opt.cut = null; this.cutReset = true; }
+    if (this.opt.cut === null && G && sb && this.opt.ground === 'solid' && sb.max.y - 1 < G.top) { this.opt.cut = sb.max.y - 1; this.cutAuto = true; }
+  }
+  addAnim(m, kind, t0, o = {}) {
+    const a = { m, kind, t0, dur: DUR[kind], land: LAND[kind] ?? 2, ...o };
+    const id = m.userData.isEnt ? 'e:' + m.userData.ent.id : m.userData.en.id;
+    if (a.land <= 1) { a.id = id; this.pending.add(id); }
+    this.anims.push(a);
+    this.pose(a, (this.at - t0) / a.dur);
+    this.dirty = true;
+  }
+  // мгновенно довести все анимации до конца: перед новым шагом, «по одному блоку», сменой фермы
+  finishAnims() {
+    for (const a of this.anims) this.endAnim(a);
+    for (const id of this.pending) this.hlBy?.get(id)?.forEach(o => (o.visible = true));
+    this.anims = []; this.pending = new Set();
+    for (const h of this.hlAnims) h.objs.forEach(o => o.scale.setScalar(h.s));
+    this.hlAnims = [];
+  }
+  endAnim(a) {
+    this.poseReset(a.m);
+    if (LEAVE.has(a.kind)) a.m.visible = false;
+    else if (a.m.userData.wait) { a.m.userData.wait = false; a.m.visible = this.shown(a.m); }
+  }
+  poseReset(m) {
+    const d = m.userData;
+    m.position.copy(d.base); m.scale.setScalar(1);
+    if (d.isEnt) m.rotation.y = d.yaw;
+  }
+  // должна ли модель быть видна по шагу, срезу и «только новое» (без учёта анимаций)
+  shown(m) {
+    const d = m.userData, cut = this.opt.cut;
+    if (d.isEnt) return this.entVisible(d.ent);
+    return !!this.active?.has(d.en.id) && !(cut !== null && d.en.y > cut) && !(this.opt.onlyNew && d.en.step !== this.k);
+  }
+  // поза модели: масштаб от середины низа клетки (у мобов — от их опоры), подъём dy
+  place(m, sx, sy, sz, dy, cy = 0) {
+    const b = m.userData.base, c = m.userData.isEnt ? 0 : .5;
+    m.scale.set(sx, sy, sz);
+    m.position.set(b.x + c * (1 - sx), b.y + dy + cy * (1 - sy), b.z + c * (1 - sz));
+  }
+  pose(a, u) {
+    const m = a.m, d = m.userData;
+    if (!LEAVE.has(a.kind)) {
+      // ещё не время — модели нет совсем (и вызова отрисовки на неё тоже)
+      if (u <= 0) { if (!d.wait) { d.wait = true; m.visible = false; } return; }
+      if (d.wait) { d.wait = false; m.visible = this.shown(m); }
+    }
+    const v = clamp01(u);
+    switch (a.kind) {
+      case 'drop': {
+        // падает с ускорением, чуть вытянутый; удар — сплющивается и пружинит
+        if (v < LAND.drop) { const q = v / LAND.drop; this.place(m, 1 - .06 * q, 1 + .12 * q, 1 - .06 * q, 1.6 * (1 - q * q)); }
+        else { const w = wobble((v - LAND.drop) / (1 - LAND.drop)); this.place(m, 1 + .14 * w, 1 - .26 * w, 1 + .14 * w, 0); }
+        break;
+      }
+      case 'pop': { const s = Math.max(1e-4, outBack(v, 2.6)); this.place(m, s, s, s, 0, .5); break; }
+      case 'fill': { const s = .04 + .96 * outCubic(v); this.place(m, 1, s, 1, 0); break; }
+      case 'out': { const s = Math.max(1e-4, 1 - v * v); this.place(m, s, s, s, .7 * outCubic(v), .5); break; }
+      case 'entIn': {
+        // моб падает, крутясь, отскакивает и чуть подпрыгивает ещё раз
+        const L = LAND.entIn;
+        if (v < L) { const q = v / L; this.place(m, .9, 1.14, .9, 2.2 * (1 - q * q)); }
+        else {
+          const b = (v - L) / (1 - L), w = wobble(b, 5, 3);
+          this.place(m, 1 + .12 * w, 1 - .2 * w, 1 + .12 * w, .3 * Math.abs(Math.sin(b * Math.PI * 1.6)) * (1 - b) ** 2);
+        }
+        m.rotation.y = d.yaw + 1.3 * (1 - outCubic(Math.min(1, v / L)));
+        break;
+      }
+      case 'entOut': { const s = Math.max(1e-4, 1 - v * v); this.place(m, s, s, s, .5 * Math.sin(v * Math.PI)); m.rotation.y = d.yaw - 2 * v * v; break; }
+    }
+  }
+  // приземлился: пыль из-под блока и рамка «новое» щёлкает на место
+  landed(a) {
+    this.pending.delete(a.id);
+    if (a.dust && a.m.visible) this.dustFx(a.m);
+    const objs = this.hlBy?.get(a.id);
+    if (objs) { objs.forEach(o => (o.visible = true)); this.hlAnims.push({ objs, t0: this.at, s: objs[0].userData.s }); }
   }
   stepBounds(k) {
     const s = this.farm.steps[k - 1], b = new THREE.Box3(); let n = 0;
@@ -273,9 +458,15 @@ export class Viewer {
     const dist = r / Math.sin(this.halfFov()) * 1.08;
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
     if (dir.y < .25) { dir.y = .5; dir.normalize(); }
-    this.tween = { from: this.camera.position.clone(), to: c.clone().add(dir.multiplyScalar(dist)), tf: this.controls.target.clone(), tt: c, t0: this.clock.getElapsedTime(), dur: .7 };
+    this.flyTo(c.clone().add(dir.multiplyScalar(dist)), c, .85);
+  }
+  flyTo(pos, target, dur) {
+    if (!dur || RM.matches) { this.camera.position.copy(pos); this.controls.target.copy(target); this.tween = null; }
+    else this.tween = { from: this.camera.position.clone(), to: pos, tf: this.controls.target.clone(), tt: target, t0: this.at, dur };
     this.dirty = true;
   }
+
+  /* ---------- копание ---------- */
   groundAt(x, y, z, k) {
     const G = this.farm.ground; if (!G) return false;
     const [x1, y1, z1, x2, , z2] = G.box;
@@ -283,7 +474,7 @@ export class Viewer {
   }
   digCells(k) {
     // клетки, где в этом шаге пропадает грунт: выкопанные и те, что заменяются новым блоком
-    const s = this.farm.steps[k - 1], G = this.farm.ground; if (!G) return [];
+    const s = this.farm.steps[k - 1], G = this.farm.ground; if (!G || this.opt.ground === 'off') return [];
     const cut = this.opt.cut, seen = new Set(), cells = [];
     const take = (x, y, z, ord) => {
       const key = K(x, y, z); if (seen.has(key)) return; seen.add(key);
@@ -298,89 +489,165 @@ export class Viewer {
     const G = this.farm.ground, cells = this.digCells(k);
     if (!cells.length) return 0;
     // мало блоков — копаем почти по одному, много — быстрее, чтобы шаг не тянулся
-    const gap = Math.min(.18, Math.max(.04, 3 / cells.length)), w = this.world();
-    cells.forEach(([x, y, z], i) => {
+    const gap = Math.min(.18, Math.max(.04, 3 / cells.length)), glass = this.opt.ground === 'glass';
+    const byKind = {};
+    this.digs = cells.map(([x, y, z], i) => {
       const kind = y === G.top ? 'grass' : y >= G.top - (G.dirt ?? 3) ? 'dirt' : 'stone';
-      const obj = new THREE.Group(), cube = BLOCKS[kind].build({ t: kind, x, y, z, p: {} }, w);
-      const edge = new THREE.LineSegments(this.edgeGeo, this.digCellMat); edge.position.set(.5, .5, .5); edge.scale.setScalar(1.01);
-      const crack = new THREE.Mesh(this.crack.geo, this.crack.mats[0]); crack.position.set(.5, .5, .5); crack.visible = false;
-      obj.add(cube, edge, crack); obj.position.set(x, y, z);
-      obj.userData = { tb: t0 + CRACK_T + i * gap, kind, cube, crack, st: -1, hit: 0 };
-      this.digRoot.add(obj);
+      const d = { x, y, z, i, kind, tb: t0 + CRACK_T + i * gap, st: -1, hit: 0, seed: i * 1.7, broken: false, obj: null };
+      (byKind[kind] ||= []).push(d);
+      return d;
     });
+    // ждущие своей очереди клетки — одной пачкой на вид грунта: пара вызовов отрисовки вместо сотен
+    for (const kind in byKind) {
+      const list = byKind[kind], inst = new THREE.InstancedMesh(this.digGeo, groundMats(kind, glass), list.length);
+      list.forEach((d, j) => { d.inst = inst; d.slot = j; inst.setMatrixAt(j, M4.makeTranslation(d.x + .5, d.y + .5, d.z + .5)); });
+      inst.renderOrder = glass ? 1 : 0;
+      this.digRoot.add(inst);
+    }
+    // сетка клеток — одна линия на весь шаг; у сломанной клетки её отрезки схлопываются в точку
+    const src = this.edgeGeo.attributes.position.array, n = src.length, pos = new Float32Array(n * cells.length);
+    this.digs.forEach((d, i) => { for (let j = 0; j < n; j += 3) { pos[i * n + j] = d.x + .5 + src[j] * 1.01; pos[i * n + j + 1] = d.y + .5 + src[j + 1] * 1.01; pos[i * n + j + 2] = d.z + .5 + src[j + 2] * 1.01; } });
+    const eg = new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.digEdges = new THREE.LineSegments(eg, this.digCellMat); this.digEdges.userData.src = pos.slice(); this.digEdges.userData.n = n;
+    this.digRoot.add(this.digEdges);
     return t0 + CRACK_T + (cells.length - 1) * gap + .25;
+  }
+  // показать или убрать клетку грунта в пачке (и её рамку)
+  digCell(d, on) {
+    d.inst.setMatrixAt(d.slot, on ? M4.makeTranslation(d.x + .5, d.y + .5, d.z + .5) : ZERO); d.inst.instanceMatrix.needsUpdate = true;
+    const e = this.digEdges, n = e.userData.n, p = e.geometry.attributes.position, s = e.userData.src;
+    for (let j = 0; j < n; j++) p.array[d.i * n + j] = on ? s[d.i * n + j] : s[d.i * n + j % 3];
+    p.needsUpdate = true;
+  }
+  // клетку начали бить: из пачки её вынимаем в отдельный куб, который трясётся и трескается
+  digOpen(d) {
+    d.inst.setMatrixAt(d.slot, ZERO); d.inst.instanceMatrix.needsUpdate = true;
+    const obj = new THREE.Group(), cube = new THREE.Mesh(this.digGeo, groundMats(d.kind, this.opt.ground === 'glass'));
+    const crack = new THREE.Mesh(this.crack.geo, this.crack.mats[0]); crack.visible = false;
+    cube.position.set(.5, .5, .5); crack.position.set(.5, .5, .5); cube.renderOrder = d.inst.renderOrder;
+    obj.add(cube, crack); obj.position.set(d.x, d.y, d.z);
+    d.obj = obj; d.cube = cube; d.crack = crack;
+    this.digRoot.add(obj);
+  }
+  digBreak(d, fx) {
+    d.broken = true;
+    if (d.obj) { this.digRoot.remove(d.obj); d.obj = null; }
+    this.digCell(d, false);
+    if (fx) this.breakFx(d);
   }
   clearDig() {
     this.seq = null; if (this.cur) this.cur.visible = false;
-    this.digRoot.clear();
-    for (const p of this.parts) this.fxRoot.remove(p.m);
-    this.parts = []; this.sub = null; this.dirty = true;
+    for (const o of this.digRoot.children) { if (o.isInstancedMesh) o.dispose(); if (o === this.digEdges) o.geometry.dispose(); }
+    this.digRoot.clear(); this.digs = []; this.digEdges = null;
+    this.clearParts();
+    this.sub = null; this.dirty = true;
   }
+
+  /* ---------- частицы: меши берём из пула, чтобы не мусорить памятью ---------- */
+  spawn(geo, material) {
+    const m = this.pool.pop() || new THREE.Mesh();
+    m.geometry = geo; m.material = material; m.visible = true;
+    m.position.set(0, 0, 0); m.rotation.set(0, 0, 0); m.scale.setScalar(1);
+    this.fxRoot.add(m);
+    return m;
+  }
+  freePart(p) {
+    this.fxRoot.remove(p.m);
+    if (p.ownMat) p.m.material.dispose();
+    this.pool.push(p.m);
+  }
+  clearParts() { for (const p of this.parts) this.freePart(p); this.parts = []; }
+  // крошки из клетки c = {x, y, z, kind}: летят, кувыркаются, отскакивают от пола
+  chips(c, n, power, life) {
+    if (this.parts.length > 320) return; // лавина крошек на большом шаге — лишние не нужны
+    const t = this.at;
+    for (let i = 0; i < n; i++) {
+      // крошки и дёрна, и земли: у травы часть крошек земляная, как у настоящего дёрна
+      const m = this.spawn(this.pGeo, mat(c.kind === 'grass' ? (i % 3 ? 'dirt' : 'grass_top') : c.kind));
+      m.position.set(c.x + .2 + Math.random() * .6, c.y + .3 + Math.random() * .6, c.z + .2 + Math.random() * .6);
+      m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+      const a = Math.random() * Math.PI * 2, sp = (.8 + Math.random()) * power;
+      this.parts.push({ m, s0: .6 + Math.random() * .6, life: life + Math.random() * .25, g: 12, floor: c.floor ?? c.y, t0: t,
+        spin: new THREE.Vector3((Math.random() - .5) * 12, (Math.random() - .5) * 12, (Math.random() - .5) * 12),
+        v: new THREE.Vector3(Math.cos(a) * sp, (1.8 + Math.random() * 2) * power, Math.sin(a) * sp) });
+    }
+  }
+  breakFx(c) {
+    this.chips(c, 12, 1, .7);
+    // короткая белая вспышка на месте блока
+    const m = this.spawn(this.digGeo, this.flashMat.clone());
+    m.position.set(c.x + .5, c.y + .5, c.z + .5);
+    this.parts.push({ m, flash: true, ownMat: true, life: .18, t0: this.at });
+  }
+  // мягкая пыль кольцом из-под только что поставленного блока или моба
+  dustFx(m) {
+    if (this.parts.length > 320) return;
+    const t = this.at, b = m.userData.base, c = m.userData.isEnt ? 0 : .5, n = m.userData.isEnt ? 8 : 6;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n + Math.random() * .1) * Math.PI * 2, p = this.spawn(this.pGeo, this.dustMat);
+      p.position.set(b.x + c + Math.cos(a) * .45, b.y + .05, b.z + c + Math.sin(a) * .45);
+      this.parts.push({ m: p, s0: .9 + Math.random() * .5, grow: true, life: .5, g: -.4, drag: 3.2, t0: t, spin: new THREE.Vector3(0, 3, 0),
+        v: new THREE.Vector3(Math.cos(a) * 1.8, .25 + Math.random() * .3, Math.sin(a) * 1.8) });
+    }
+  }
+
   /* ---------- по одному блоку ---------- */
   putMeshes() {
-    return this.entries.filter(en => en.step === this.k && this.active.has(en.id)).map(en => this.meshFor(en))
+    const blocks = this.entries.filter(en => en.step === this.k && this.active.has(en.id)).map(en => this.meshFor(en))
       .sort((a, b) => (a.userData.en.y - b.userData.en.y) || (a.userData.en.x + a.userData.en.z - b.userData.en.x - b.userData.en.z));
+    // мобы и лодка этого шага — тоже «блоки» ползунка, после построек
+    const ents = this.ents.filter(e => e.step === this.k && this.entVisible(e)).map(e => this.entFor(e));
+    return [...blocks, ...ents];
   }
   seqLen() { return this.digCells(this.k).length + this.putMeshes().length; }
   scrub(i) {
     if (!this.seq) {
-      for (const a of this.anims) { a.m.scale.setScalar(1); a.m.position.copy(a.m.userData.base); }
-      this.anims = []; this.clearDig(); this.startDig(this.k, Infinity);
-      this.seq = { dig: [...this.digRoot.children], put: this.putMeshes() };
+      this.finishAnims();
+      this.clearDig(); this.startDig(this.k, Infinity);
+      this.seq = { dig: this.digs, put: this.putMeshes() };
     }
-    const { dig, put } = this.seq, cut = this.opt.cut, prev = this.sub ?? dig.length + put.length;
+    const { dig, put } = this.seq, prev = this.sub ?? dig.length + put.length;
     let last = null;
-    dig.forEach((o, j) => { const gone = j < i; if (gone && !o.userData.broken && i > prev) this.breakFx(o); o.userData.broken = gone; o.visible = !gone; if (j === i - 1) last = o.position; });
-    put.forEach((m, j) => { const on = j < i - dig.length; m.scale.setScalar(1); m.position.copy(m.userData.base); m.visible = on && (cut === null || m.userData.en.y <= cut); if (j === i - 1 - dig.length) last = m.userData.base; });
+    dig.forEach((d, j) => {
+      const gone = j < i;
+      if (gone !== d.broken) { if (gone) this.digBreak(d, i > prev && !RM.matches); else { d.broken = false; this.digCell(d, true); } }
+      if (j === i - 1) last = d;
+    });
+    put.forEach((m, j) => {
+      const on = j < i - dig.length, d = m.userData;
+      if (!on) {
+        // блок убрали ползунком — его недоигранное появление тоже отменяем, иначе он вылезет обратно
+        if (d.wait || this.anims.some(a => a.m === m)) { this.anims = this.anims.filter(a => a.m !== m); d.wait = false; this.pending.delete(d.isEnt ? 'e:' + d.ent.id : d.en.id); }
+        this.poseReset(m); m.visible = false;
+      }
+      else if (!m.visible && !d.wait && this.shown(m)) {
+        // только что поставленный блок шлёпается на место, а не просто появляется
+        this.poseReset(m); m.visible = this.shown(m);
+        if (i > prev && !RM.matches) { const kind = d.isEnt ? 'entIn' : kindOf(d.en); this.addAnim(m, kind, this.at, { dust: kind === 'drop' || kind === 'entIn' }); }
+      }
+      if (j === i - 1 - dig.length) last = d.isEnt ? { x: d.base.x - .5, y: d.base.y, z: d.base.z - .5 } : d.base;
+    });
     this.sub = i;
-    if (!this.cur) { this.cur = new THREE.LineSegments(this.edgeGeo, new THREE.LineBasicMaterial({ color: 0xfff1a8 })); this.cur.scale.setScalar(1.1); this.root.add(this.cur); }
+    if (!this.cur) { this.cur = new THREE.LineSegments(this.edgeGeo, new THREE.LineBasicMaterial({ color: 0xfff1a8 })); this.root.add(this.cur); }
     this.cur.visible = !!last && i < dig.length + put.length;
-    if (last) this.cur.position.set(last.x + .5, last.y + .5, last.z + .5);
+    if (last) { this.cur.position.set(last.x + .5, last.y + .5, last.z + .5); this.curT = this.at; }
     this.dirty = true;
   }
-  breakFx(o) {
-    const t = this.clock.getElapsedTime(), kind = o.userData.kind;
-    for (let i = 0; i < 10; i++) {
-      // крошки и дёрна, и земли: у травы часть крошек земляная, как у настоящего дёрна
-      const m = new THREE.Mesh(this.pGeo, mat(kind === 'grass' ? (i % 3 ? 'dirt' : 'grass_top') : kind));
-      m.position.set(o.position.x + .2 + Math.random() * .6, o.position.y + .2 + Math.random() * .6, o.position.z + .2 + Math.random() * .6);
-      m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
-      this.fxRoot.add(m);
-      this.parts.push({ m, s0: .7 + Math.random() * .6, life: .55 + Math.random() * .25, g: 9.5,
-        spin: new THREE.Vector3((Math.random() - .5) * 9, (Math.random() - .5) * 9, (Math.random() - .5) * 9),
-        v: new THREE.Vector3((Math.random() - .5) * 3, 1.4 + Math.random() * 1.8, (Math.random() - .5) * 3), t0: t });
-    }
-  }
-  // мягкая пыль из-под только что поставленного блока
-  dustFx(m) {
-    const t = this.clock.getElapsedTime(), b = m.userData.base;
-    for (let i = 0; i < 5; i++) {
-      const a = Math.random() * Math.PI * 2, p = new THREE.Mesh(this.pGeo, this.dustMat);
-      p.position.set(b.x + .5 + Math.cos(a) * .45, b.y + .05, b.z + .5 + Math.sin(a) * .45);
-      this.fxRoot.add(p);
-      this.parts.push({ m: p, s0: .8 + Math.random() * .5, life: .45, g: -.6, spin: new THREE.Vector3(0, 2, 0),
-        v: new THREE.Vector3(Math.cos(a) * 1.1, .35 + Math.random() * .3, Math.sin(a) * 1.1), t0: t });
-    }
-  }
-  animLeft() { return Math.max(0, this.animEnd - this.clock.getElapsedTime()); }
+  animLeft() { return Math.max(0, this.animEnd - this.at); }
   replay() { this.goto(this.k, { replay: true }); }
   refreshVisibility() {
-    const cut = this.opt.cut;
     this.lavaOn = false;
-    for (const [id, m] of this.meshes) {
-      const en = this.entries[id];
+    for (const m of this.meshes.values()) {
       m.userData.demoHidden = false; // демо спрячет заново в следующем кадре, если надо
-      let v = this.active?.has(id);
-      if (v && cut !== null && en.y > cut) v = false;
-      if (v && this.opt.onlyNew && en.step !== this.k) v = false;
-      m.visible = !!v;
-      if (v && en.t === 'lava') this.lavaOn = true;
+      const v = this.shown(m);
+      m.visible = v && !m.userData.wait;
+      if (v && m.userData.en.t === 'lava') this.lavaOn = true;
     }
     // как в игре: стык двух стёкол (и двух клеток воды) не рисуется
     const vis = new Map();
-    for (const [id, m] of this.meshes) if (m.visible) for (const [x, y, z] of this.entries[id].cells) vis.set(K(x, y, z), this.entries[id]);
+    for (const [id, m] of this.meshes) if (this.shown(m)) for (const [x, y, z] of this.entries[id].cells) vis.set(K(x, y, z), this.entries[id]);
     for (const [id, m] of this.meshes) {
-      const cm = m.userData.cm; if (!cm || !m.visible) continue;
+      const cm = m.userData.cm; if (!cm || !this.shown(m)) continue;
       const en = this.entries[id], kind = cm.userData.cull; let mask = 0;
       FACES.forEach(([dx, dy, dz], i) => {
         const nb = vis.get(K(en.x + dx, en.y + dy, en.z + dz)); if (!nb || nb.t !== kind) return;
@@ -388,35 +655,39 @@ export class Viewer {
       });
       if (cm.userData.mask !== mask) { cm.userData.mask = mask; cm.geometry = maskGeo(...cm.userData.dims, mask); }
     }
-    for (const e of this.ents) {
-      const on = e.step <= this.k && (!e.until || this.k < e.until);
-      const m = on ? this.entFor(e) : this.entMeshes.get(e.id);
-      if (m) m.visible = this.entVisible(e);
-    }
+    for (const m of this.entMeshes.values()) m.visible = this.shown(m) && !m.userData.wait;
+    // уходящие блоки доигрывают свой уход, даже если вид поменяли посреди анимации
+    for (const a of this.anims) if (LEAVE.has(a.kind)) a.m.visible = true;
     this.groundRoot.visible = this.opt.ground !== 'off';
     this.dirty = true;
   }
   entVisible(e) {
     const cut = this.opt.cut;
-    return e.step <= this.k && (!e.until || this.k < e.until) && !(cut !== null && e.y > cut + .2);
+    return this.entOn(e, this.k) && !(cut !== null && e.y > cut + .2) && !(this.opt.onlyNew && e.step !== this.k);
   }
   buildHighlights() {
     if (this.hl) { this.root.remove(this.hl); this.hl.traverse(o => o.userData.own && o.geometry.dispose()); }
     this.hl = new THREE.Group(); this.root.add(this.hl); this.dirty = true;
+    this.hlBy = new Map(); this.hlAnims = [];
     if (!this.opt.highlight || !this.active || !this.k) return;
     const step = this.farm.steps[this.k - 1];
     // «копать»: одна общая фигура — контур по внешним рёбрам и лёгкая красная заливка, без каши из рамок
     const dug = new Set();
     for (const b of step.dig || []) for (const [x, y, z] of boxCells(b)) if (this.opt.cut === null || y <= this.opt.cut) dug.add(K(x, y, z));
     if (dug.size) this.hl.add(...this.shell(dug));
+    // рамка нового блока прячется, пока блок не приземлился (см. landed)
+    const keep = (id, objs, s) => { objs.forEach(o => { o.userData.s = s; o.visible = !this.pending.has(id); this.hl.add(o); }); this.hlBy.set(id, objs); };
     for (const id of this.active) {
       const en = this.entries[id];
       if (en.step !== this.k || en.t === 'water' && !en.p.src) continue;
       if (this.opt.cut !== null && en.y > this.opt.cut) continue;
-      for (const [x, y, z] of en.cells) {
-        const l = new THREE.LineSegments(this.edgeGeo, this.hlMat); l.position.set(x + .5, y + .5, z + .5); l.scale.setScalar(1.04);
-        this.hl.add(l);
-      }
+      keep(id, en.cells.map(([x, y, z]) => { const l = new THREE.LineSegments(this.edgeGeo, this.hlMat); l.position.set(x + .5, y + .5, z + .5); l.scale.setScalar(1.04); return l; }), 1.04);
+    }
+    for (const e of this.ents) {
+      if (e.step !== this.k || !this.entVisible(e)) continue;
+      const ring = new THREE.Mesh(this.ringGeo, this.ringMat), s = Math.max(1, this.entFor(e).userData.rad / .5);
+      ring.position.set(e.x, e.y + .03, e.z); ring.renderOrder = 4; ring.scale.setScalar(s);
+      keep('e:' + e.id, [ring], s);
     }
   }
 
@@ -455,15 +726,47 @@ export class Viewer {
     const ids = this.hist.get(key); if (ids && this.entries[ids[0]].step <= k) return false;
     return true;
   }
+  // Сетка грунта: для каждой клетки — шаг, на котором она перестаёт быть природной (копают или ставят блок).
+  // Грунт меняется только на таких шагах, поэтому готовые меши кэшируем по «сколько таких шагов прошло».
+  prepGround() {
+    const G = this.farm.ground; this.gGone = null; if (!G) return;
+    const [x1, y1, z1, x2, y2, z2] = G.box, nx = x2 - x1 + 1, ny = y2 - y1 + 1, nz = z2 - z1 + 1;
+    const gone = new Uint16Array(nx * ny * nz).fill(65535), steps = new Set();
+    for (let x = x1; x <= x2; x++) for (let y = y1; y <= y2; y++) for (let z = z1; z <= z2; z++) {
+      const key = K(x, y, z), d = this.dig.get(key), ids = this.hist.get(key), p = ids ? this.entries[ids[0]].step : undefined;
+      const s = Math.min(d ?? 65535, p ?? 65535);
+      gone[((x - x1) * ny + (y - y1)) * nz + (z - z1)] = s;
+      if (s < 65535) steps.add(s);
+    }
+    this.gGone = gone; this.gDim = [nx, ny, nz]; this.gSteps = [...steps].sort((a, b) => a - b);
+  }
+  dropGroundCache() {
+    for (const g of (this.gCache || new Map()).values()) g.traverse(o => o.userData.ground && o.geometry.dispose());
+    this.gCache = new Map(); this.groundRoot.clear();
+  }
   buildGround() {
     // Грунт — кусок мира-«диорама»: рисуются только наружные грани (поверхность, стенки ям, срез).
-    for (const o of this.groundRoot.children) { if (o.userData.ground) o.geometry.dispose(); else o.material.dispose(); }
-    this.groundRoot.clear(); this.dirty = true;
-    const G = this.farm.ground; if (!G) return;
-    const [x1, y1, z1, x2, y2, z2] = G.box, top = G.top, dirt = G.dirt ?? 3, k = this.k, cut = this.opt.cut;
+    this.dirty = true;
+    const G = this.farm.ground;
+    this.groundRoot.clear();
+    if (!G) return;
+    const k = this.k, cut = this.opt.cut, glass = this.opt.ground === 'glass';
+    const key = `${this.gSteps.filter(s => s <= k).length}|${cut}|${glass}`;
+    let g = this.gCache.get(key);
+    if (!g) {
+      g = this.groundMesh(k, cut, glass);
+      // кэш небольшой: срез ползунком даёт много вариантов, старые выкидываем
+      if (this.gCache.size >= 24) { const [old, og] = this.gCache.entries().next().value; og.traverse(o => o.userData.ground && o.geometry.dispose()); this.gCache.delete(old); }
+      this.gCache.set(key, g);
+    }
+    this.groundRoot.add(g);
+  }
+  groundMesh(k, cut, glass) {
+    const G = this.farm.ground, out = new THREE.Group();
+    const [x1, y1, z1, x2, y2, z2] = G.box, top = G.top, dirt = G.dirt ?? 3, [, ny, nz] = this.gDim, gone = this.gGone;
     const yTop = Math.min(y2, top, cut === null ? Infinity : cut);
-    if (yTop < y1) return;
-    const solid = (x, y, z) => x >= x1 && x <= x2 && y >= y1 && y <= yTop && z >= z1 && z <= z2 && this.natural(x, y, z, k);
+    if (yTop < y1) return out;
+    const solid = (x, y, z) => x >= x1 && x <= x2 && y >= y1 && y <= yTop && z >= z1 && z <= z2 && gone[((x - x1) * ny + (y - y1)) * nz + (z - z1)] > k;
     const buf = {}, B = key => (buf[key] ||= { p: [], n: [], uv: [], i: [] });
     for (let x = x1; x <= x2; x++) for (let y = y1; y <= yTop; y++) for (let z = z1; z <= z2; z++) {
       if (!solid(x, y, z)) continue;
@@ -476,7 +779,6 @@ export class Viewer {
         b.i.push(base, base + 1, base + 2, base, base + 2, base + 3);
       });
     }
-    const glass = this.opt.ground === 'glass';
     const o = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, ...(glass ? { transparent: true, opacity: .13, depthWrite: false } : {}) };
     for (const key in buf) {
       const b = buf[key], g = new THREE.BufferGeometry();
@@ -485,23 +787,27 @@ export class Viewer {
       g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
       g.setIndex(b.i);
       const m = new THREE.Mesh(g, mat(key, o)); m.userData.ground = true; m.renderOrder = glass ? 1 : 0;
-      this.groundRoot.add(m);
+      out.add(m);
     }
     if (glass) {
-      const box = new THREE.LineSegments(this.edgeGeo, new THREE.LineBasicMaterial({ color: 0xcdbf9f, transparent: true, opacity: .22, depthWrite: false }));
+      const box = new THREE.LineSegments(this.edgeGeo, this.boxMat);
       box.scale.set(x2 - x1 + 1, yTop - y1 + 1, z2 - z1 + 1); box.position.set((x1 + x2 + 1) / 2, (y1 + yTop + 1) / 2, (z1 + z2 + 1) / 2);
-      this.groundRoot.add(box);
+      out.add(box);
     }
+    return out;
   }
 
   /* ---------- настройки ---------- */
   set(opt) {
     Object.assign(this.opt, opt);
-    // любая настройка сбрасывает «по одному блоку» к целому шагу
-    this.clearDig();
+    if ('cut' in opt) this.cutAuto = false;
+    // «по одному блоку» сбрасываем к целому шагу; копание посреди шага не трогаем,
+    // а если поменяли срез или грунт — доводим шаг до конца, иначе стройка зависнет в пустоте
+    if (this.seq) this.clearDig();
+    else if (('cut' in opt || 'ground' in opt) && (this.anims.length || this.digs.length)) { this.finishAnims(); this.clearDig(); this.animEnd = 0; }
     if ('ground' in opt || 'cut' in opt) this.buildGround();
     this.refreshVisibility(); this.buildHighlights();
-    if ('demo' in opt && !opt.demo) this.resetDemo();
+    if ('demo' in opt) { this.demoT0 = this.at; if (!opt.demo) this.resetDemo(); }
   }
   bounds() {
     const b = new THREE.Box3();
@@ -523,10 +829,8 @@ export class Viewer {
     if (mode === 'top') dir = new THREE.Vector3(0.0001, 1, 0.12).normalize();
     if (mode === 'front') dir = new THREE.Vector3(0, .25, 1).normalize();
     if (f.center) c.set(...f.center);
-    this.tween = { from: this.camera.position.clone(), to: c.clone().add(dir.multiplyScalar(dist)), tf: this.controls.target.clone(), tt: c, t0: this.clock.getElapsedTime(), dur: this.farm && this.k ? .6 : 0 };
-    if (!this.tween.dur) { this.camera.position.copy(this.tween.to); this.controls.target.copy(c); this.tween = null; }
+    this.flyTo(c.clone().add(dir.multiplyScalar(dist)), c, this.farm && this.k ? .75 : 0);
     this.camera.near = .1; this.camera.far = dist * 6; this.camera.updateProjectionMatrix();
-    this.dirty = true;
   }
 
   /* ---------- демо ---------- */
@@ -552,108 +856,180 @@ export class Viewer {
       obj.visible = false; obj.rotation.y = a.yaw || 0;
       this.actorRoot.add(obj); this.actors.push({ a, obj, mats });
     }
+    // ячейки, которые демо прячет, — один раз, а не в каждом кадре
+    this.demoHide = (D.hide || []).map(([x, y, z, q, w]) => [this.hist.get(K(x, y, z)) || [], q, w]);
+    this.demoHidden = new Set();
   }
   resetDemo() {
     if (this.actors) this.actors.forEach(x => (x.obj.visible = false));
-    for (const m of this.meshes.values()) if (m.userData.demoHidden) { m.userData.demoHidden = false; }
+    for (const p of this.pistons) pistonExt(p.userData.head, 0);
+    this.lastDemoT = undefined;
     this.refreshVisibility();
   }
-  demoFrame(t) {
+  // значение по ключам [время, ...числа]: движение разгоняется и тормозит там, где начинается и кончается путь
+  static sample(ks, T) {
+    if (T < ks[0][0] || T > ks[ks.length - 1][0]) return null;
+    if (ks.length === 1) return ks[0].slice(1);
+    let i = 0; while (i < ks.length - 2 && T > ks[i + 1][0]) i++;
+    const [t0, ...p0] = ks[i], [t1, ...p1] = ks[i + 1];
+    const u = t1 > t0 ? clamp01((T - t0) / (t1 - t0)) : 1;
+    const same = (a, b) => a.slice(1, 4).every((v, j) => v === b[j + 1]);
+    // разгон, если до этого стояли; торможение, если дальше стоим
+    const easeIn = i === 0 || same(ks[i - 1], ks[i]), easeOut = i + 2 >= ks.length || same(ks[i + 1], ks[i + 2]);
+    const up = easeIn && easeOut ? smooth(u) : easeIn ? u * u : easeOut ? 1 - (1 - u) ** 2 : u;
+    return p0.map((a, j) => a + ((p1[j] ?? a) - a) * (j < 3 ? up : smooth(u)));
+  }
+  demoFrame(T) {
     const D = this.farm.demo; if (!D) return;
     if (!this.actors) this.buildActors();
-    const T = t % D.period;
     for (const { a, obj, mats } of this.actors) {
-      const ks = a.keys; let st = null;
-      if (T >= ks[0][0] && T <= ks[ks.length - 1][0]) {
-        for (let i = 0; i < ks.length - 1; i++) if (T >= ks[i][0] && T <= ks[i + 1][0]) {
-          const [t0, ...p0] = ks[i], [t1, ...p1] = ks[i + 1]; const u = t1 > t0 ? (T - t0) / (t1 - t0) : 0;
-          st = p0.map((v, j) => v + ((p1[j] ?? v) - v) * u); break;
-        }
-        if (!st) st = ks[ks.length - 1].slice(1);
-      }
+      const st = Viewer.sample(a.keys, T);
       if (!st) { obj.visible = false; continue; }
-      const [x, y, z, s = 1, o = 1] = st;
+      let [x, y, z, s = 1, o = 1] = st;
+      if (a.label) {
+        // подпись выпрыгивает с перелётом, чуть покачивается и гаснет в конце
+        const t0 = a.keys[0][0], t1 = a.keys[a.keys.length - 1][0];
+        s *= Math.max(.01, outBack(clamp01((T - t0) / .32), 2.2)); o *= clamp01((t1 - T) / .25);
+        y += .06 * Math.sin((T - t0) * 3);
+      }
       obj.visible = s > .01 && o > .01 && (a.label || this.opt.cut === null || y < this.opt.cut + 1);
       let sx = 0; if (a.shake && a.shake.some(([q, w]) => T >= q && T <= w)) sx = Math.sin(T * 45) * .05;
-      obj.position.set(x + sx, y + (a.label ? 0 : 0), z);
+      obj.position.set(x + sx, y, z);
       const bs = obj.userData.baseScale;
       if (bs) obj.scale.set(bs.x * s, bs.y * s, 1); else if (a.sy) obj.scale.set(1, s, 1); else obj.scale.setScalar(s);
       const fl = a.flash && a.flash.some(([q, w]) => T >= q && T <= w);
       for (const m of mats) {
         m.opacity = o;
-        if (m.userData.c0) { m.color.copy(m.userData.c0); if (fl) m.color.multiply(TINT.setRGB(1.7 + .5 * Math.sin(T * 20), .62, .42)); }
+        if (m.userData.c0) { m.color.copy(m.userData.c0); if (fl) m.color.multiply(TINT.setRGB(1.6 + .4 * Math.sin(T * 14), .66, .46)); }
       }
     }
-    const hidden = new Set();
-    for (const [x, y, z, q, w] of D.hide || []) if (T >= q && T <= w) { const ids = this.hist.get(K(x, y, z)); if (ids) ids.forEach(id => hidden.add(id)); }
+    // поршни: голова резко выстреливает и медленнее уходит назад
+    if (D.pistons && this.pistons.length) {
+      const st = Viewer.sample(D.pistons, T), ext = st ? st[0] : 0;
+      for (const p of this.pistons) pistonExt(p.userData.head, ext);
+    }
+    // разлёт крошек в нужный момент цикла: срезанный бамбук, голем в лаве
+    const pT = this.lastDemoT;
+    if (pT !== undefined) for (const [bt, x, y, z, kind, n = 8, floor = y] of D.bursts || []) {
+      if ((pT < bt && T >= bt) || (pT > T && (bt > pT || bt <= T))) this.chips({ x, y, z, kind, floor }, n, .7, .5);
+    }
+    this.lastDemoT = T;
+    const hidden = this.demoHidden; hidden.clear();
+    for (const [ids, q, w] of this.demoHide) if (T >= q && T <= w) ids.forEach(id => hidden.add(id));
     for (const [id, m] of this.meshes) {
       const h = hidden.has(id);
       if (h && m.visible) { m.visible = false; m.userData.demoHidden = true; }
-      else if (!h && m.userData.demoHidden) { m.userData.demoHidden = false; m.visible = true; }
+      else if (!h && m.userData.demoHidden) { m.userData.demoHidden = false; m.visible = this.shown(m); }
     }
     for (const [id, q, w] of D.hideEnt || []) {
-      const m = this.entMeshes.get(id), e = this.ents.find(x => x.id === id);
-      if (m && e) m.visible = this.entVisible(e) && !(T >= q && T <= w);
+      const m = this.entMeshes.get(id);
+      if (m) m.visible = this.shown(m) && !(T >= q && T <= w);
     }
   }
 
   /* ---------- кадр ---------- */
   frame() {
     // рисуем только когда что-то меняется: на телефоне статичная сцена не жжёт батарею
-    const t = this.clock.getElapsedTime();
+    const real = this.clock.getElapsedTime();
+    const dt = Math.min(.05, real - (this.lastT ?? real)); this.lastT = real;
+    if (!this.onScreen) return;
+    const t = this.at += dt;
     let busy = false;
     if (this.tween) {
-      const u = Math.min(1, (t - this.tween.t0) / this.tween.dur), e = 1 - Math.pow(1 - u, 3);
+      const u = Math.min(1, (t - this.tween.t0) / this.tween.dur), e = inOutCubic(u);
       this.camera.position.lerpVectors(this.tween.from, this.tween.to, e); this.controls.target.lerpVectors(this.tween.tf, this.tween.tt, e);
       if (u >= 1) this.tween = null;
       busy = true;
     }
-    if (this.anims.length) busy = true;
-    for (const an of this.anims) {
-      const u = (t - an.t0) / an.dur; const m = an.m;
-      if (u < 0) { m.scale.setScalar(.001); continue; }
-      // блок ставится: вырастает из половины с лёгким пружинящим перебором и чуть опускается на место
-      const v = Math.min(1, u); const s = .5 + .5 * ease(v);
-      m.scale.set(s, s, s); m.position.set(m.userData.base.x + (1 - s) * .5, m.userData.base.y + (1 - v) * .22 + (1 - s) * .5, m.userData.base.z + (1 - s) * .5);
-      if (v >= 1) { m.scale.setScalar(1); m.position.copy(m.userData.base); an.done = true; if (an.dust && m.visible) this.dustFx(m); }
-    }
-    this.anims = this.anims.filter(a => !a.done);
-    // копание: по блоку бьют киркой — трещина растёт, блок вздрагивает от ударов, потом лопается крошками
-    for (const o of this.digRoot.children) {
-      const d = o.userData; if (d.broken) continue;
-      if (t >= d.tb) { d.broken = true; o.visible = false; this.breakFx(o); busy = true; }
-      else if (t >= d.tb - CRACK_T) {
-        const st = Math.min(5, Math.floor((t - d.tb + CRACK_T) / CRACK_T * 6));
-        if (st !== d.st) { d.st = st; d.crack.material = this.crack.mats[st]; d.crack.visible = true; d.hit = t; }
-        const s = 1 - .05 * Math.max(0, 1 - (t - d.hit) / .08);
-        const j = st >= 4 ? .03 : 0;
-        d.cube.scale.setScalar(s); d.crack.scale.setScalar(s);
-        d.cube.position.set(.5 + (Math.random() - .5) * j, .5 + (Math.random() - .5) * j, .5 + (Math.random() - .5) * j); // куб стоит центром в .5
-        busy = true;
+    if (this.anims.length) {
+      busy = true;
+      let w = 0;
+      for (const a of this.anims) {
+        const u = (t - a.t0) / a.dur;
+        this.pose(a, u);
+        if (a.id !== undefined && u >= a.land && this.pending.has(a.id)) this.landed(a);
+        if (u >= 1) this.endAnim(a); else this.anims[w++] = a;
       }
+      this.anims.length = w;
     }
-    const dt = Math.min(.05, t - (this.lastT ?? t)); this.lastT = t;
-    if (this.parts.length) busy = true;
-    for (const p of this.parts) {
-      const u = (t - p.t0) / (p.life ?? .6);
-      p.v.y -= (p.g ?? 9.5) * dt; p.m.position.addScaledVector(p.v, dt);
-      if (p.spin) { p.m.rotation.x += p.spin.x * dt; p.m.rotation.y += p.spin.y * dt; p.m.rotation.z += p.spin.z * dt; }
-      p.m.scale.setScalar(Math.max(.01, (p.s0 ?? 1) * (1 - u * u)));
-      if (u >= 1) { this.fxRoot.remove(p.m); p.done = true; }
+    // рамка «новое» щёлкает: чуть крупнее и сжимается на место
+    if (this.hlAnims.length) {
+      busy = true;
+      for (const h of this.hlAnims) {
+        const u = clamp01((t - h.t0) / .3);
+        h.objs.forEach(o => o.scale.setScalar(h.s * (1 + .3 * (1 - outCubic(u)))));
+        h.done = u >= 1;
+      }
+      this.hlAnims = this.hlAnims.filter(h => !h.done);
     }
-    this.parts = this.parts.filter(p => !p.done);
-    const demoOn = this.opt.demo && this.farm && this.k === this.N && !REDUCED;
+    // курсор «по одному блоку» отскакивает к новой клетке
+    if (this.cur?.visible && this.curT !== undefined) {
+      const u = clamp01((t - this.curT) / .25);
+      this.cur.scale.setScalar(1.1 + .25 * (1 - outBack(u, 2)));
+      if (u < 1) busy = true;
+    }
+    // копание: по блоку бьют киркой — трещина растёт, блок вздрагивает от ударов, потом лопается крошками
+    for (const d of this.digs) {
+      if (d.broken) continue;
+      // если кадры долго не шли, просроченные клетки просто исчезают, без лавины крошек
+      if (t >= d.tb) { this.digBreak(d, t - d.tb < .3); busy = true; continue; }
+      if (t < d.tb - CRACK_T) continue;
+      if (!d.obj) this.digOpen(d);
+      const st = Math.min(5, Math.floor((t - d.tb + CRACK_T) / CRACK_T * 6));
+      if (st !== d.st) { d.st = st; d.crack.material = this.crack.mats[st]; d.crack.visible = true; d.hit = t; if (st % 2) this.chips(d, 2, .45, .35); }
+      // удар: блок вжимается и чуть наклоняется, к концу дрожит сильнее
+      const k = Math.max(0, 1 - (t - d.hit) / .09), s = 1 - .1 * k * k;
+      const j = st >= 3 ? .012 * (st - 2) : 0, w = t * 70 + d.seed, tilt = .06 * k * (d.i % 2 ? 1 : -1);
+      d.cube.scale.setScalar(s); d.crack.scale.setScalar(s); d.cube.rotation.z = d.crack.rotation.z = tilt;
+      d.cube.position.set(.5 + Math.sin(w) * j, .5 + Math.sin(w * 1.3) * j, .5 + Math.cos(w * .9) * j); // куб стоит центром в .5
+      d.crack.position.copy(d.cube.position);
+      busy = true;
+    }
+    if (this.parts.length) {
+      busy = true;
+      let w = 0;
+      for (const p of this.parts) {
+        const u = (t - p.t0) / p.life;
+        if (p.flash) { p.m.material.opacity = .7 * (1 - Math.min(1, u)) ** 2; p.m.scale.setScalar(1.02 + .35 * outCubic(Math.min(1, u))); }
+        else {
+          if (p.drag) p.v.multiplyScalar(Math.max(0, 1 - p.drag * dt));
+          p.v.y -= p.g * dt; p.m.position.addScaledVector(p.v, dt);
+          // крошки отскакивают от пола ямы и катятся
+          if (p.floor !== undefined && p.m.position.y < p.floor + .07) { p.m.position.y = p.floor + .07; p.v.y = Math.abs(p.v.y) * .35; p.v.x *= .6; p.v.z *= .6; p.spin.multiplyScalar(.6); }
+          if (p.spin) { p.m.rotation.x += p.spin.x * dt; p.m.rotation.y += p.spin.y * dt; p.m.rotation.z += p.spin.z * dt; }
+          const k = Math.min(1, u);
+          p.m.scale.setScalar(Math.max(.01, p.s0 * (p.grow ? (1 + .8 * k) * (1 - k * k * k) : 1 - k * k * k)));
+        }
+        if (u >= 1) this.freePart(p); else this.parts[w++] = p;
+      }
+      this.parts.length = w;
+    }
+    const demoOn = this.opt.demo && this.farm && this.k === this.N && !RM.matches && t >= this.demoT0;
     if (this.lavaOn || demoOn) {
-      const lava = mat('lava', { glow: true });
-      if (lava.map) lava.map.offset.y = (t * .05) % 1;
-      if (t - this.lastDraw > 1 / 24) busy = true; // лава течёт медленно, 24 кадров хватает
+      // лава пиксельная: текстура сдвигается на пиксель раз в 1,25 с — рисуем только тогда
+      const lava = mat('lava', { glow: true }), q = (Math.floor(t * .8) / 16) % 1;
+      if (lava.map && lava.map.offset.y !== q) { lava.map.offset.y = q; busy = true; }
     }
-    if (demoOn) { this.demoFrame(t); busy = true; }
-    else if (this.actors && this.actors.some(x => x.obj.visible)) { this.resetDemo(); busy = true; }
+    if (demoOn) { this.demoFrame((t - this.demoT0) % this.farm.demo.period); this.demoRunning = true; busy = true; }
+    // демо остановилось — всё возвращаем: актёров, головы поршней, счётчик для крошек
+    else if (this.demoRunning) { this.demoRunning = false; this.resetDemo(); busy = true; }
     this.controls.update();
     if (!busy && !this.dirty) return;
     this.dirty = false; this.lastDraw = t;
+    const r0 = performance.now();
     this.renderer.render(this.scene, this.camera);
+    if (busy) this.adapt(performance.now() - r0);
+  }
+  // не тянет телефон — снижаем чёткость ступеньками (не ниже 1), а когда снова легко — возвращаем.
+  // Смотрим на время самой отрисовки, а не на частоту кадров: экономный режим телефона даёт 30 к/с и при лёгкой сцене.
+  adapt(ms) {
+    this.slow = ms > 12 ? this.slow + 1 : Math.max(-120, this.slow - 1);
+    let d = this.dpr;
+    if (this.slow > 30 && d > 1) d = Math.max(1, d - .25);
+    else if (this.slow <= -120 && d < this.dprMax) d = Math.min(this.dprMax, d + .25);
+    else return;
+    this.slow = 0; this.dpr = d;
+    this.renderer.setPixelRatio(d); this.resize();
   }
 
   /* ---------- наведение ---------- */
@@ -663,7 +1039,7 @@ export class Viewer {
     this.ray.setFromCamera(this.ptr, this.camera);
     const objs = [...this.blockRoot.children.filter(o => o.visible), ...this.entRoot.children.filter(o => o.visible)];
     // прозрачный грунт не мешает наводиться на блоки внутри
-    if (this.groundRoot.visible && this.opt.ground !== 'glass') objs.push(...this.groundRoot.children.filter(o => o.userData.ground));
+    if (this.groundRoot.visible && this.opt.ground !== 'glass') this.groundRoot.traverse(o => o.userData.ground && objs.push(o));
     const hits = this.ray.intersectObjects(objs, true);
     for (const h of hits) {
       let o = h.object, ok = true;

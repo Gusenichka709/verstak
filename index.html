@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" class="pre">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -45,7 +45,6 @@ a { color: var(--gold); }
 .tabs { display: flex; gap: 4px; background: var(--panel); padding: 4px; border-radius: 10px; border: 1px solid var(--line); }
 .tabs a { text-decoration: none; color: var(--muted); padding: 6px 14px; border-radius: 7px; font-weight: 600; font-size: 14px; }
 .tabs a[aria-current="page"] { background: var(--gold); color: #1c1407; }
-.tabs a:hover:not([aria-current="page"]) { color: var(--ink); background: var(--panel2); }
 
 main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .farms { flex: 1; min-height: 0; display: grid; grid-template-columns: 236px minmax(0, 1fr) 390px; }
@@ -53,7 +52,6 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 .picker { border-right: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 8px; overflow: auto; background: #151b20; }
 .pick { display: flex; flex-direction: column; gap: 4px; text-decoration: none; color: var(--ink); padding: 12px 12px 12px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--line); }
-.pick:hover { border-color: #41515a; }
 .pick.on { border-left-color: var(--gold); background: var(--panel2); }
 .pick b { font: 600 16px/1.2 var(--display); }
 .pick span { font-size: 13px; color: var(--muted); line-height: 1.35; }
@@ -74,8 +72,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .legend i { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--gold); margin-right: 5px; vertical-align: -1px; }
 .legend i.dig { border-color: #ff7b5c; background: rgba(255,90,60,.3); }
 .legend i.mob { border: 0; border-radius: 50%; background: var(--c); }
-.tip { position: absolute; pointer-events: none; background: rgba(16,20,24,.94); border: 1px solid #3b4951; border-radius: 8px; padding: 7px 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 1px; max-width: 230px; z-index: 3; }
-.tip[hidden] { display: none; }
+.tip { position: absolute; left: 0; top: 0; pointer-events: none; background: rgba(16,20,24,.94); border: 1px solid #3b4951; border-radius: 8px; padding: 7px 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 1px; max-width: 230px; z-index: 3; }
 .tip b { font-size: 13.5px; }
 .tip span { color: var(--muted); }
 .loading, .nogl { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); margin: 0; padding: 24px; text-align: center; }
@@ -85,10 +82,9 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 12px; border-top: 1px solid var(--line); background: #151b20; }
 .grp { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .btn { background: var(--panel2); border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 6px 11px; font-weight: 500; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.btn:hover:not(:disabled) { border-color: #4a5b64; }
 .btn:disabled { opacity: .4; cursor: default; }
 .btn.primary { background: var(--gold); border-color: transparent; color: #1c1407; font-weight: 600; }
-.btn[aria-pressed="false"] { opacity: .6; }
+.btn[aria-pressed="false"]:not(#play) { opacity: .6; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg label { padding: 5px 9px; font-size: 12.5px; cursor: pointer; color: var(--muted); }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
@@ -124,8 +120,7 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .stepnav { display: flex; justify-content: space-between; gap: 8px; margin-top: 2px; }
 .steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .steps button { width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 8px; padding: 6px 8px; cursor: pointer; display: flex; gap: 10px; align-items: baseline; color: var(--muted); font-size: 14px; }
-.steps button:hover { background: rgba(255,255,255,.04); color: var(--ink); }
-.steps button.on { background: rgba(240,185,74,.1); border-color: rgba(240,185,74,.35); color: var(--ink); }
+.steps button.on { color: var(--ink); }
 .steps em { font-style: normal; font: 600 13px var(--display); color: var(--gold); min-width: 18px; font-variant-numeric: tabular-nums; }
 svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; color: #cbbf9f; }
 
@@ -225,7 +220,6 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
   .lv { grid-template-columns: 1fr; gap: 3px; }
   .top { padding: 10px 12px; }
 }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 
 .blk { display: inline-flex; align-items: center; gap: 6px; }
 .blk[hidden] { display: none; }
@@ -238,7 +232,6 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 .brew { margin-top: 8px; }
 .pchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 12px; }
 .pchips button { display: inline-flex; align-items: center; gap: 7px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px 5px 8px; cursor: pointer; color: var(--ink); font-size: 13.5px; }
-.pchips button:hover { border-color: #4a5b64; }
 .pchips button[aria-pressed="true"] { border-color: var(--gold); background: rgba(240,185,74,.13); }
 .pchips i, .tn > summary i { width: 12px; height: 12px; border-radius: 2px; background: var(--c); box-shadow: inset 0 -3px 0 rgba(0,0,0,.25); flex: none; }
 .tn.pot > summary i { border-radius: 3px 3px 6px 6px; height: 14px; box-shadow: inset 0 4px 0 rgba(255,255,255,.35); }
@@ -247,7 +240,6 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 .tn > summary::-webkit-details-marker { display: none; }
 .tn > summary::before { content: '▸'; color: var(--gold); width: 10px; transition: transform .15s; }
 .tn[open] > summary::before { transform: rotate(90deg); }
-.tn > summary:hover { background: var(--panel2); }
 .tn > summary b { font-weight: 600; }
 .tn > summary small { color: var(--muted); font-size: 12.5px; }
 .ways { list-style: none; margin: 0 0 6px 13px; padding: 2px 0 2px 14px; border-left: 1px dashed #3a4850; display: flex; flex-direction: column; gap: 8px; }
@@ -302,83 +294,133 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 .need h4, .block h4 { color: var(--muted); }
 @media (max-width: 560px) { .tabs a { padding: 6px 9px; } }
 
-/* ---------- анимации: сочно, но коротко (150–450 мс) и не мешают читать ---------- */
-:root { --spring: cubic-bezier(.34, 1.56, .64, 1); --out: cubic-bezier(.22, 1, .36, 1); }
-@keyframes rise { from { opacity: 0; transform: translateY(14px) scale(.985); } }
-@keyframes drop { from { opacity: 0; transform: translateY(-14px); } }
+/* ---------- анимации: быстро внутрь, пружинисто наружу; только transform и opacity ----------
+   Появления на события (шаг, ферма, вкладка) запускает app.js через WAAPI:
+   CSS-анимации перезапускались бы после display:none при каждом возврате во вкладку. */
+:root { --spring: cubic-bezier(.34, 1.56, .64, 1); --out: cubic-bezier(.22, 1, .36, 1); --in: cubic-bezier(.4, 0, 1, 1); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.99); } }
+@keyframes riseS { from { opacity: 0; transform: translateY(8px); } }
 @keyframes fade { from { opacity: 0; } }
-@keyframes slideL { from { opacity: 0; transform: translateX(22px); } }
-@keyframes slideR { from { opacity: 0; transform: translateX(-22px); } }
-@keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes slideR { from { opacity: 0; transform: translateX(-12px); } }
+@keyframes vpIn { from { opacity: 0; transform: scale(1.015); } }
 @keyframes bob { 0%, 100% { transform: translateY(0) rotate(0); } 30% { transform: translateY(-4px) rotate(-8deg); } 60% { transform: translateY(0) rotate(4deg); } }
 @keyframes pulse { 50% { opacity: .45; } }
-@keyframes glint { from { background-position: 0 0; } to { background-position: 100% 0; } }
+@keyframes pillIn { from { opacity: 0; transform: translateX(var(--x)) scaleX(.4); } }
 
-/* загрузка сайта */
-.boot .top { animation: drop .5s var(--out) both; }
-.boot .brand .logo { animation: bob .9s .35s var(--out) both; }
-.boot .tabs a { animation: rise .45s var(--out) both; animation-delay: calc(.12s + var(--i, 0) * 60ms); }
-.boot .picker .pick { animation: slideR .5s var(--out) both; animation-delay: calc(.2s + var(--i, 0) * 80ms); }
-.boot .viewport { animation: fade .7s .15s ease-out both; }
-.boot .controls { animation: rise .5s .3s var(--out) both; }
-.boot .panel > * { animation: rise .5s var(--out) both; animation-delay: calc(.25s + var(--i, 0) * 70ms); }
-.boot .foot { animation: fade .6s .5s both; }
+/* загрузка сайта: класс boot ставит app.js, когда всё нарисовано и шрифт на месте */
+.pre .controls, .pre .hud, .pre .hint { opacity: 0; }
+.boot .logo { animation: bob .9s .3s var(--out) backwards; }
+.boot .picker .pick { animation: slideR .32s var(--out) backwards; animation-delay: calc(100ms + var(--i, 0) * 50ms); }
+.boot .viewport canvas { animation: vpIn .45s .12s var(--out) backwards; }
+.boot .panel > * { animation: rise .3s var(--out) backwards; animation-delay: calc(180ms + var(--i, 0) * 45ms); }
+.boot .controls { animation: riseS .28s .26s var(--out) backwards; }
+.boot .hud, .boot .hint, .boot .foot { animation: fade .3s .35s backwards; }
 .loading { animation: pulse 1.1s ease-in-out infinite; }
 
-/* смена вкладки и фермы */
-.farms:not([hidden]) .stage, .sheet:not([hidden]) .sheethead { animation: fade .35s ease-out both; }
-.sheet:not([hidden]) .cards > *, .sheet:not([hidden]) .notes > *, .sheet:not([hidden]) .setup > *,
-.sheet:not([hidden]) .facts > *, .sheet:not([hidden]) .brew, .sheet:not([hidden]) .sub, .sheet:not([hidden]) .effs,
-.sheet:not([hidden]) .gnote, .sheet:not([hidden]) .recipe {
-  animation: rise .45s var(--out) both; animation-delay: calc(min(var(--i, 0), 12) * 45ms);
-}
-#vcards.filtering > * { animation: rise .3s var(--out) both; animation-delay: 0s; }
-.panel[data-anim="farm"] > * { animation: rise .45s var(--out) both; animation-delay: calc(var(--i, 0) * 70ms); }
-.panel[data-anim="next"] .stepcard > * { animation: slideL .35s var(--out) both; animation-delay: calc(var(--i, 0) * 35ms); }
-.panel[data-anim="prev"] .stepcard > * { animation: slideR .35s var(--out) both; animation-delay: calc(var(--i, 0) * 35ms); }
-.panel[data-anim] .steps button.on { animation: fade .3s both; }
-.stepcard .chips li { animation: rise .35s var(--out) both; animation-delay: calc(.12s + min(var(--i, 0), 10) * 40ms); }
-#stepchip.bump b { display: inline-block; animation: pop .35s var(--spring); }
-
-/* вкладки: золотая плашка переезжает к выбранной */
+/* вкладки: золотая плашка переезжает к выбранной (пружина — только на сдвиг) */
 .tabs { position: relative; }
-.tabs a { position: relative; z-index: 1; transition: color .25s; }
+.tabs a { position: relative; z-index: 1; transition: color .25s, background-color .2s; }
 .tabs a[aria-current="page"] { background: none; }
 .tabs.ready a[aria-current="page"] { color: #1c1407; }
 .tabs:not(.ready) a[aria-current="page"] { background: var(--gold); }
-.tabpill { position: absolute; top: 4px; bottom: 4px; left: 0; width: 0; border-radius: 7px; background: var(--gold); box-shadow: 0 2px 12px rgba(240,185,74,.35); transition: transform .45s var(--spring), width .45s var(--spring); pointer-events: none; }
+.tabpill { position: absolute; top: 4px; bottom: 4px; left: 0; width: 0; border-radius: 7px; background: var(--gold); box-shadow: 0 2px 12px rgba(240,185,74,.35); transition: transform .42s var(--spring), width .3s var(--out); pointer-events: none; }
+.tabs.ready .tabpill { animation: pillIn .36s var(--spring) backwards; }
 .tabs:not(.ready) .tabpill { display: none; }
+.tabs.still .tabpill { transition: none; }
 
-/* наведение и нажатие */
-.logo { transition: transform .3s var(--spring); }
-.brand:hover .logo { transform: rotate(-10deg) scale(1.12); }
-.pick { transition: transform .25s var(--spring), border-color .2s, background .2s, box-shadow .25s; }
-.pick:hover { transform: translateX(3px); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+/* выбор фермы: одна золотая метка ездит между карточками */
+.picker { position: relative; }
+.pick { transition: transform .25s var(--spring), border-color .2s, background-color .2s; }
 .pick.on { box-shadow: inset 0 0 0 1px rgba(240,185,74,.15), 0 6px 20px rgba(240,185,74,.08); }
-.btn, .pchips button, .steps button, .seg label { transition: transform .18s var(--spring), border-color .2s, background .2s, color .2s, box-shadow .2s, opacity .2s; }
-.btn:hover:not(:disabled), .pchips button:hover { transform: translateY(-1px); }
-.btn:active:not(:disabled), .pchips button:active, .seg label:active { transform: scale(.94); transition-duration: .06s; }
-/* блик пробегает по золотой кнопке: в покое полоса за краем (позиции 0 и 100% — чистое золото) */
-.btn.primary { background: linear-gradient(100deg, var(--gold) 44%, #ffe6ad 50%, var(--gold) 56%) 0 0 / 300% 100% var(--gold); }
-.btn.primary:hover:not(:disabled) { animation: glint .8s ease-out; box-shadow: 0 4px 16px rgba(240,185,74,.3); }
-.steps button:hover { transform: translateX(3px); }
-.steps button:active { transform: scale(.98); }
-.pchips button[aria-pressed="true"] { animation: pop .3s var(--spring); }
-.prof, .tipcard, .facts article, .notes article, .setup li { transition: transform .3s var(--spring), border-color .25s, box-shadow .3s; }
-.prof:hover, .tipcard:hover, .facts article:hover, .setup li:hover { transform: translateY(-3px); border-color: #3c4b53; box-shadow: 0 10px 26px rgba(0,0,0,.28); }
-.search input { transition: border-color .2s, box-shadow .25s; }
-.search input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(240,185,74,.18); outline: none; }
-.vnone:not([hidden]) { animation: rise .3s var(--out) both; }
-.tn > summary { transition: background .2s; }
-.tn[open] > .ways, .tn[open] > .kids { animation: rise .3s var(--out) both; }
-.tip:not([hidden]) { animation: fade .12s both; }
+.picker.bar .pick.on { border-left-color: var(--line); }
+.pick b { transition: transform .3s var(--spring), color .2s; }
+.pick.on b { transform: translateX(3px); color: #ffd98a; }
+.pickbar { position: absolute; left: 0; top: 0; z-index: 1; border-radius: 2px; background: var(--gold); box-shadow: 0 0 12px rgba(240,185,74,.5); opacity: 0; transition: transform .42s var(--spring), opacity .2s; pointer-events: none; }
+.picker.bar .pickbar { opacity: 1; }
+.picker.still .pickbar { transition: none; }
 
+/* карточка шага */
+.sbody { display: flex; flex-direction: column; gap: 10px; }
+.prog { position: relative; height: 6px; border-radius: 3px; overflow: hidden; background: #2d3940;
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--n) - 2px), transparent 0 calc(100% / var(--n)));
+  mask: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--n) - 2px), transparent 0 calc(100% / var(--n))); }
+.prog i { position: absolute; inset: 0; background: linear-gradient(90deg, #c98e2a, var(--gold)); transform-origin: left; transform: scaleX(var(--p, 0)); transition: transform .5s var(--out); }
+.chips li { position: relative; transition: border-color .25s, background-color .25s; }
+.chips.all li.cur { border-color: rgba(240,185,74,.7); background: rgba(240,185,74,.08); }
+.chips.all li::after { content: ''; position: absolute; inset: -1px; border-radius: inherit; border: 2px solid var(--gold); opacity: 0; pointer-events: none; }
+/* счётчик ×N набегает от нуля: число рисует counter(), сам текст остаётся для читалок */
+.cnt .chips b[style] { counter-reset: n var(--n); }
+.cnt .chips b[style] > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.cnt .chips b[style]::after { content: '×' counter(n); content: '×' counter(n) / ''; }
+
+/* «Все шаги»: подсветка переезжает к текущему, пройденные получают галочку */
+.stepswrap { position: relative; }
+.steps { position: relative; }
+.steppill { position: absolute; left: 0; right: 0; top: 0; border-radius: 8px; background: rgba(240,185,74,.1); border: 1px solid rgba(240,185,74,.35); opacity: 0; transition: transform .38s var(--spring), opacity .2s; pointer-events: none; }
+.steppill.shown { opacity: 1; }
+.stepswrap.still .steppill { transition: none; }
+.steps button { transition: transform .26s var(--spring), background-color .2s, color .2s; }
+.steps em { transition: color .25s; }
+.steps button.done em { color: var(--em); }
+.steps button::after { content: '✓'; margin-left: auto; padding-left: 6px; color: var(--em); opacity: 0; transform: scale(0); transition: transform .26s var(--spring), opacity .15s; }
+.steps button.done::after { opacity: 1; transform: scale(1); }
+
+/* плашка шага над 3D */
+#stepchip b { display: inline-block; }
+.cutbadge { display: inline-block; }
+.cutbadge[hidden] { display: none; }
+
+/* подсказка над 3D: двигается transform, прячется с задержкой и не мигает */
+.tip { opacity: 0; visibility: hidden; transition: opacity .12s, visibility 0s .12s; will-change: transform; }
+.tip.show { opacity: 1; visibility: visible; transition: opacity .12s; }
+
+/* кнопки: нажатие — мгновенно, отпускание — с пружинкой */
+.btn, .pchips button, .seg label { transition: transform .26s var(--spring), border-color .2s, background-color .2s, color .2s, opacity .2s; }
+.btn { box-shadow: inset 0 -2px 0 rgba(0,0,0,.25); }
+.btn.primary { position: relative; overflow: hidden; isolation: isolate; background: var(--gold); }
+/* блик — полоса, которая проезжает transform-ом */
+.btn.primary::after { content: ''; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 38%, rgba(255,255,255,.55) 50%, transparent 62%); transform: translateX(-120%); pointer-events: none; }
+/* «Собрать с нуля»: кнопка заполняется по мере стройки */
+.btn.primary::before { content: ''; position: absolute; inset: 0; z-index: -1; background: rgba(0,0,0,.2); transform-origin: left; transform: scaleX(var(--p, 0)); opacity: 0; transition: transform .6s linear, opacity .3s; pointer-events: none; }
+.btn.primary.playing::before { opacity: 1; }
+#play > span { display: inline-block; }
+.tn > summary { transition: background-color .2s; }
+.tn > summary::before { transition: transform .3s var(--spring); }
+.search input { transition: border-color .2s; }
+.search input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(240,185,74,.18); outline: none; }
+
+/* карточки шпаргалок: подсветка — на ::after (только opacity), за экраном не рисуем */
+.prof, .tipcard, .facts article, .notes article, .setup li { position: relative; transition: transform .28s var(--spring), border-color .2s; }
+.prof::after, .tipcard::after, .facts article::after, .setup li::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(240,185,74,.22), inset 0 -60px 60px -50px rgba(240,185,74,.07); opacity: 0; transition: opacity .25s; pointer-events: none; }
+.sheet .cards > * { content-visibility: auto; contain-intrinsic-size: auto 520px; }
+
+/* наведение — только там, где есть мышь: на телефоне :hover залипает после тапа */
+.logo { transition: transform .3s var(--spring); }
+@media (hover: hover) and (pointer: fine) {
+  .tabs a:hover:not([aria-current="page"]) { color: var(--ink); background: var(--panel2); }
+  .brand:hover .logo { transform: rotate(-10deg) scale(1.12); }
+  .pick:hover { border-color: #41515a; transform: translateX(3px); }
+  .btn:hover:not(:disabled), .pchips button:hover { border-color: #4a5b64; transform: translateY(-1px); }
+  .btn.primary:hover:not(:disabled)::after { transform: translateX(120%); transition: transform .7s var(--out); }
+  .steps button:hover { background: rgba(255,255,255,.04); color: var(--ink); transform: translateX(3px); }
+  .tn > summary:hover { background: var(--panel2); }
+  .prof:hover, .tipcard:hover, .facts article:hover, .setup li:hover { transform: translateY(-3px); border-color: #3c4b53; }
+  .prof:hover::after, .tipcard:hover::after, .facts article:hover::after, .setup li:hover::after { opacity: 1; }
+}
+.btn:active:not(:disabled), .pchips button:active, .seg label:active { transform: translateY(1px) scale(.95); box-shadow: inset 0 1px 0 rgba(0,0,0,.25); transition-duration: .07s; }
+.steps button:active { transform: scale(.98); transition-duration: .07s; }
+
+/* меньше движения: короткие проявления остаются, сдвигов нет */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
+  :root { --spring: ease; --out: ease; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; transition-delay: 0s !important; transition-duration: .12s !important; scroll-behavior: auto !important; }
+  .tabpill, .steppill, .pickbar, .prog i, .steps button::after, .btn.primary::before, .btn.primary::after,
+  .btn, .pchips button, .seg label, .pick, .pick b, .steps button, .logo, .prof, .tipcard, .facts article, .notes article, .setup li, .tn > summary::before { transition-property: opacity, color, background-color, border-color !important; }
+  :is(.btn, .pchips button, .seg label, .pick, .steps button, .prof, .tipcard, .facts article, .setup li):is(:hover, :active), .brand:hover .logo, .pick.on b { transform: none !important; }
 }
 </style>
 </head>
-<body class="boot">
+<body>
 <header class="top">
   <div class="brand"><span class="logo" aria-hidden="true"></span><div><h1>Верстак</h1><p>Minecraft Java 26.3 · пошаговые 3D-схемы и шпаргалки</p></div></div>
   <nav class="tabs" aria-label="Разделы">
@@ -394,8 +436,8 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
     <nav class="picker" id="picker" aria-label="Выбор фермы"></nav>
     <div class="stage">
       <div class="viewport" id="viewport">
-        <div class="hud"><span id="stepchip"></span><span class="legend"><span><i></i>новое в шаге</span><span><i class="dig"></i>копать</span><span><i class="mob" style="--c:#c9a06a"></i>житель</span><span><i class="mob" style="--c:#5f9e4b"></i>зомби</span><span><i class="mob" style="--c:#c9c3b6"></i>голем</span></span></div>
-        <div class="tip" id="tip" hidden></div>
+        <div class="hud"><span id="stepchip"><b class="n"></b><span class="t"></span><i class="cutbadge cv" hidden></i><i class="cutbadge ok cr" hidden>срез сброшен, чтобы было видно новое</i><i class="cutbadge ok ca" hidden>срез опущен, чтобы было видно новое</i></span><span class="legend"><span><i></i>новое в шаге</span><span><i class="dig"></i>копать</span><span><i class="mob" style="--c:#c9a06a"></i>житель</span><span><i class="mob" style="--c:#5f9e4b"></i>зомби</span><span><i class="mob" style="--c:#c9c3b6"></i>голем</span></span></div>
+        <div class="tip" id="tip" role="tooltip"></div>
         <div class="loading" id="loading">Загружаю 3D…</div>
         <div class="hint">тяни — вращать · колесо — зум · клик по блоку — его шаг</div>
       </div>
@@ -404,7 +446,7 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
           <button class="btn" id="prev" aria-label="Предыдущий шаг">◀</button>
           <button class="btn" id="next" aria-label="Следующий шаг">▶</button>
           <button class="btn" id="replay" aria-label="Показать шаг ещё раз" title="Показать шаг ещё раз: как копать и что ставить">↻ Шаг ещё раз</button>
-          <button class="btn primary" id="play">▶ Собрать с нуля</button>
+          <button class="btn primary" id="play" aria-pressed="false"><span>▶ Собрать с нуля</span></button>
           <span class="blk" id="blk"><button class="btn" id="bPrev" aria-label="Блок назад">◀ блок</button><input type="range" id="bScrub" min="0" value="0" aria-label="По одному блоку"><button class="btn" id="bNext" aria-label="Блок вперёд">блок ▶</button><small id="bLbl"></small></span>
           <button class="btn" id="demoBtn" aria-pressed="true" hidden>Демо работы</button>
         </div>

@@ -125,6 +125,9 @@ D.piston_side = (g, r, P) => {
 };
 D.piston_front = (g, r, P) => { D.planks(g, r, P); frame(g, '#6f6f6f'); };
 D.piston_back = (g, r, P) => { noise(P, r, ['#7c7c7c', '#858585', '#707070']); g.fillStyle = '#585858'; g.fillRect(5, 5, 6, 6); g.fillStyle = '#464646'; g.fillRect(6, 6, 4, 4); frame(g, '#5f5f5f'); };
+// верх корпуса под головой: видно, только когда поршень выдвинут
+D.piston_inner = (g, r, P) => { noise(P, r, ['#7c7c7c', '#858585', '#707070']); frame(g, '#5f5f5f'); g.fillStyle = '#3a3a3a'; g.fillRect(5, 5, 6, 6); g.fillStyle = '#262626'; g.fillRect(6, 6, 4, 4); };
+D.piston_arm = (g, r, P) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) P(x, y, x % 4 === 3 ? '#7a5b34' : pick(r, PAL.oak)); };
 D.observer_front = (g, r, P) => {
   noise(P, r, PAL.gray); frame(g, '#3f3f3f');
   g.fillStyle = '#262626'; g.fillRect(4, 4, 8, 8);
@@ -269,20 +272,40 @@ function geo(w, h, d) {
 export const FACES = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 const MG = new Map();
 export function maskGeo(w, h, d, mask) {
-  // тот же куб без граней из маски (общие стенки соседних стёкол и воды)
+  // тот же куб без граней из маски (общие стенки соседних стёкол и воды); материал у таких кубов один,
+  // поэтому лишние грани просто выкидываем из индекса
   if (!mask) return geo(w, h, d);
   const k = `${w}|${h}|${d}|${mask}`;
   if (MG.has(k)) return MG.get(k);
-  const b = geo(w, h, d), g = new THREE.BufferGeometry();
-  g.setIndex(b.index);
+  const b = geo(w, h, d), g = new THREE.BufferGeometry(), src = b.index.array, idx = [];
   for (const n in b.attributes) g.setAttribute(n, b.attributes[n]);
-  b.groups.forEach((gr, i) => { if (!((mask >> i) & 1)) g.addGroup(gr.start, gr.count, gr.materialIndex); });
+  b.groups.forEach((gr, i) => { if (!((mask >> i) & 1)) for (let j = gr.start; j < gr.start + gr.count; j++) idx.push(src[j]); });
+  g.setIndex(idx);
   MG.set(k, g);
   return g;
 }
 function cullable(mesh, kind, dims) { mesh.userData.cull = kind; mesh.userData.dims = dims; mesh.userData.mask = 0; return mesh; }
 const PLANE = new THREE.PlaneGeometry(1, 1);
-function bx(w, h, d, x, y, z, m) { const o = new THREE.Mesh(geo(w, h, d), m); o.position.set(x, y, z); return o; }
+// Меш куба с материалами граней. Одинаковые материалы склеиваем: грани с одним материалом
+// идут одной группой, поэтому «верх-бока-низ» — 3 вызова отрисовки, а сплошной куб — 1, а не 6.
+const PK = new Map();
+function boxMesh(base, m) {
+  if (Array.isArray(m) && m.every(q => q === m[0])) m = m[0];
+  if (!Array.isArray(m)) return new THREE.Mesh(base, m);
+  const uniq = [...new Set(m)], slot = m.map(q => uniq.indexOf(q)), k = base.uuid + '|' + slot.join('');
+  if (!PK.has(k)) {
+    const g = new THREE.BufferGeometry(), src = base.index.array, idx = [];
+    for (const n in base.attributes) g.setAttribute(n, base.attributes[n]);
+    uniq.forEach((_, s) => {
+      const start = idx.length;
+      for (const gr of base.groups) if (slot[gr.materialIndex] === s) for (let j = gr.start; j < gr.start + gr.count; j++) idx.push(src[j]);
+      g.addGroup(start, idx.length - start, s);
+    });
+    g.setIndex(idx); PK.set(k, g);
+  }
+  return new THREE.Mesh(PK.get(k), uniq);
+}
+function bx(w, h, d, x, y, z, m) { const o = boxMesh(geo(w, h, d), m); o.position.set(x, y, z); return o; }
 const six = (top, side, bottom = top) => [side, side, top, bottom, side, side];
 function cube(top, side = top, bottom = top) { return bx(1, 1, 1, .5, .5, .5, six(mat(top), mat(side), mat(bottom))); }
 
@@ -311,6 +334,32 @@ function frontFaced(front, side, top, f) {
 function onWall(obj, side) { return pivot(obj, 0, YROT[side || 'n'], 0); }
 
 /* ---------- форма блоков ---------- */
+// Поршень из двух частей: корпус 12/16 и голова 4/16; между ними шток. Выдвигает движок через pistonExt().
+let PIST;
+function pistonModel(f) {
+  if (!PIST) {
+    // боковая текстура общая: деревянная полоса сверху — голове, камень — корпусу
+    const crop = (h, v0, v1) => {
+      const g = new THREE.BoxGeometry(1, h, 1), uv = g.attributes.uv;
+      for (const fc of [0, 1, 4, 5]) for (let i = 0; i < 4; i++) { const j = fc * 4 + i; uv.setY(j, v0 + uv.getY(j) * (v1 - v0)); }
+      return g;
+    };
+    PIST = { base: crop(.75, 0, .75), plate: crop(.25, .75, 1), arm: new THREE.BoxGeometry(.25, 1, .25) };
+  }
+  const side = mat('piston_side'), face = mat('piston_front');
+  const base = boxMesh(PIST.base, six(mat('piston_inner'), side, mat('piston_back'))); base.position.set(.5, .375, .5);
+  const plate = boxMesh(PIST.plate, six(face, side, face)); plate.position.set(.5, .875, .5);
+  const arm = new THREE.Mesh(PIST.arm, mat('piston_arm')); arm.position.set(.5, .75, .5); arm.visible = false;
+  const head = grp(plate); head.userData.pistonHead = true; head.userData.arm = arm;
+  const r = ROT[f || 'u'];
+  return pivot(grp(base, arm, head), r[0], r[1], r[2]);
+}
+// выдвинуть голову поршня на ext блока (0..1): шток растягивается от корпуса до головы
+export function pistonExt(head, ext) {
+  const a = head.userData.arm;
+  head.position.y = ext;
+  a.visible = ext > .01; a.scale.y = Math.max(.01, ext); a.position.y = .75 + ext / 2;
+}
 function hopper(f) {
   const s = mat('hopper_side'), t = mat('hopper_top');
   const g = grp(
@@ -436,7 +485,7 @@ export const BLOCKS = {
   lectern: { n: 'Кафедра', cat: 'm', build: () => bx(1, .9, 1, .5, .45, .5, six(mat('lectern_top'), mat('lectern_side'), mat('lectern_side'))) },
   blast_furnace: { n: 'Плавильная печь', cat: 'm', build: e => frontFaced('blast_front', 'blast_side', 'blast_top', e.p.f) },
   bed: { n: 'Кровать', cat: 'm', cells: e => [[0, 0, 0], footOff(e.p.f)], build: e => bedModel(e.p.f) },
-  piston: { n: 'Поршень', cat: 'r', build: e => oriented('piston_front', 'piston_back', 'piston_side', e.p.f) },
+  piston: { n: 'Поршень', cat: 'r', build: e => pistonModel(e.p.f) },
   observer: { n: 'Наблюдатель', cat: 'r', build: e => oriented('observer_front', 'observer_back', 'observer_side', e.p.f) },
   dust: { n: 'Редстоун', cat: 'r', build: (e, w) => dustModel(w.dustConn(e)) },
   lever: { n: 'Рычаг', cat: 'r', build: e => leverModel(e.p.side) },
@@ -557,5 +606,4 @@ export const ENTS = {
   bamboo_item: { n: 'Бамбук', build: () => body([[.1, .45, .1, 0, .22, 0, '#6a9c30']]) },
   potion: { n: 'Взрывное зелье слабости', build: () => body([[.22, .26, .22, 0, .13, 0, '#5a5f6e'], [.09, .1, .09, 0, .31, 0, '#c9d2da']]) },
   gapple: { n: 'Золотое яблоко', build: () => body([[.28, .26, .28, 0, .13, 0, '#f0c53d'], [.04, .1, .04, 0, .3, 0, '#6b4a2b']]) },
-  piston_head: { n: 'Голова поршня', build: () => body([[1, 1, .25, 0, .5, 0, '#b08b55'], [.25, .25, .75, 0, .5, .5, '#a0a0a0']]) },
 };
