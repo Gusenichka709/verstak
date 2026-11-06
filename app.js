@@ -556,7 +556,13 @@ function updateControls() {
   cut.value = viewer.opt.cut === null ? lv.hi : viewer.opt.cut;
   showCut();
 }
-function syncBlk() { const n = viewer.seqLen(), sc = $('#bScrub'); $('#blk').hidden = !n; sc.max = n; sc.value = n; blkLabel(); }
+// «по одному блоку» прячем, только если в шаге вообще ничего не ставят; если блоки спрятал срез —
+// кнопки просто гаснут, но место держат, иначе весь ряд управления прыгает
+function syncBlk() {
+  const n = viewer.seqLen(), sc = $('#bScrub'), s = farm.steps[viewer.k - 1], any = !!(s.put?.length || s.dig?.length || s.ents?.length);
+  $('#blk').hidden = !any; $('#blk').style.visibility = n ? '' : 'hidden';
+  sc.max = n; sc.value = n; blkLabel();
+}
 // настройка вида сбрасывает «по одному блоку», ползунок должен это знать
 function setOpt(o) { viewer.set(o); syncBlk(); }
 function blkLabel() { const sc = $('#bScrub'); $('#bLbl').textContent = `блок ${sc.value}/${sc.max}`; }
