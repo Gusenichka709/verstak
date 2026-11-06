@@ -1,6 +1,6 @@
 // Офлайн-режим: всё складываем в кэш при установке, отдаём из кэша и тихо обновляем из сети.
 // Новая версия сайта — поменяй VERSION, старый кэш удалится.
-const VERSION = 'verstak-8';
+const VERSION = 'verstak-9';
 const FILES = [
   './',
   'app.js',
@@ -11,6 +11,7 @@ const FILES = [
   'cheats/villagers.js',
   'engine.js',
   'farms/bamboo.js',
+  'farms/cane.js',
   'farms/curing.js',
   'farms/index.js',
   'store.js',

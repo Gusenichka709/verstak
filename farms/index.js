@@ -1,6 +1,6 @@
 // Порядок ферм в списке. Новая ферма: создай farms/<id>.js и добавь id сюда.
 // В файле фермы: cat — категория из CATS, tier — уровень из TIERS (по сложности постройки, времени и выходу).
-export default ['iron', 'bamboo', 'curing'];
+export default ['iron', 'bamboo', 'cane', 'curing'];
 
 export const CATS = [
   ['res', 'Ресурсы'],

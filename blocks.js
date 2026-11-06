@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -188,6 +188,21 @@ D.rail = (g, r, P) => {
   g.fillStyle = '#6b4a2b'; for (const y of [1, 5, 9, 13]) g.fillRect(1, y, 14, 2);
   g.fillStyle = '#a8a8a8'; g.fillRect(3, 0, 1, 16); g.fillRect(12, 0, 1, 16);
   g.fillStyle = '#7d7d7d'; g.fillRect(4, 0, 1, 16); g.fillRect(11, 0, 1, 16);
+};
+// сахарный тростник: три стебля с узлами и парой листиков
+D.cane = (g, r, P) => {
+  for (const x0 of [3, 7, 11]) {
+    for (let y = 0; y < 16; y++) { P(x0, y, '#8fc95a'); P(x0 + 1, y, pick(r, ['#a8d86a', '#9ccf62'])); }
+    for (const y of [2, 7, 12]) { P(x0, (y + x0) % 16, '#d7ec9e'); P(x0 + 1, (y + x0) % 16, '#c8e48c'); }
+  }
+  P(2, 5, '#7cb84a'); P(1, 4, '#7cb84a'); P(13, 9, '#7cb84a'); P(14, 8, '#7cb84a');
+};
+// энергорельс: золотые полосы, посередине красная жилка
+D.prail = (g, r, P) => {
+  g.fillStyle = '#6b4a2b'; for (const y of [1, 5, 9, 13]) g.fillRect(1, y, 14, 2);
+  g.fillStyle = '#e8c04a'; g.fillRect(3, 0, 1, 16); g.fillRect(12, 0, 1, 16);
+  g.fillStyle = '#b8902a'; g.fillRect(4, 0, 1, 16); g.fillRect(11, 0, 1, 16);
+  g.fillStyle = '#ff3b2a'; g.fillRect(7, 0, 2, 16);
 };
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
@@ -434,6 +449,16 @@ function shootModel() {
   for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('shoot')); l.scale.set(.7, .7, 1); l.rotation.y = a; l.position.set(.5, .35, .5); g.add(l); }
   return g;
 }
+function caneModel() {
+  const g = new THREE.Group();
+  for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('cane')); l.rotation.y = a; l.position.set(.5, .5, .5); g.add(l); }
+  return g;
+}
+function poweredRailModel(axis, on) {
+  const p = new THREE.Mesh(PLANE, mat('prail', on ? { glow: true } : {})); p.rotation.x = -Math.PI / 2; p.position.set(.5, .012, .5);
+  if (axis === 'x') p.rotation.z = Math.PI / 2;
+  return grp(p);
+}
 function signModel(side) {
   const w = mat('planks');
   return onWall(grp(bx(.875, .5, .0833, .5, .55, .042, w)), side);
@@ -515,6 +540,8 @@ export const BLOCKS = {
   torch: { n: 'Факел', cat: 'm', build: e => torchModel(e.p.side) },
   ladder: { n: 'Лестница', cat: 'm', build: e => ladderModel(e.p.side) },
   rail: { n: 'Рельсы', cat: 'm', build: e => railModel(e.p.axis) },
+  powered_rail: { n: 'Энергорельс', cat: 'm', build: e => poweredRailModel(e.p.axis, e.p.on) },
+  sugar_cane: { n: 'Сахарный тростник (посадить)', cat: 'b', build: () => caneModel() },
   iron_bars: { n: 'Железная решётка', cat: 'b', build: () => cube('iron_bars') },
   mark: { n: 'Метка', cat: 'x', build: e => markerModel(e.p.c || '#ff4d3d') },
   air: { n: 'Пусто', cat: 'x' },
@@ -595,6 +622,11 @@ function minecart() {
   const m = mat('#6f7478'), k = mat('#4a4f53');
   return grp(bx(.98, .1, .9, 0, .12, 0, k), bx(.98, .5, .08, 0, .4, -.41, m), bx(.98, .5, .08, 0, .4, .41, m), bx(.08, .5, .9, -.45, .4, 0, m), bx(.08, .5, .9, .45, .4, 0, m));
 }
+function hopperCart() {
+  const g = minecart(), h = mat('#4a4f53'), d = mat('#2e3236');
+  g.add(bx(.7, .22, .62, 0, .56, 0, h), bx(.5, .02, .44, 0, .675, 0, d));
+  return g;
+}
 const ITEM = c => () => body([[.32, .08, .16, 0, .04, 0, c]]);
 export function label(text, color = '#ffd36b') {
   const cv = document.createElement('canvas'); const g = cv.getContext('2d');
@@ -619,6 +651,8 @@ export const ENTS = {
   golem: { n: 'Железный голем', build: () => tower() },
   boat: { n: 'Лодка', item: true, build: () => boat() },
   minecart: { n: 'Вагонетка', item: true, build: () => minecart() },
+  hopper_minecart: { n: 'Вагонетка с воронкой', item: true, build: () => hopperCart() },
+  cane_item: { n: 'Тростник', build: () => body([[.08, .42, .08, -.06, .21, 0, '#9ccf62'], [.08, .38, .08, .06, .19, .03, '#8fc95a']]) },
   iron: { n: 'Железный слиток', build: ITEM('#dedede') },
   bamboo_item: { n: 'Бамбук', build: () => body([[.1, .45, .1, 0, .22, 0, '#6a9c30']]) },
   potion: { n: 'Взрывное зелье слабости', build: () => body([[.22, .26, .22, 0, .13, 0, '#5a5f6e'], [.09, .1, .09, 0, .31, 0, '#c9d2da']]) },
