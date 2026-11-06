@@ -224,6 +224,11 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 .cutbox { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cutbox .btn.sm { padding: 3px 9px; min-width: 0; font-size: 12px; }
 .cutbox #cutLabel { display: inline-block; font-size: 13px; }
+/* на ПК ряд среза не переносится: подпись фиксированной ширины, длинное — многоточием, полный текст во всплывашке */
+@media (min-width: 821px) {
+  .cutbox { flex-wrap: nowrap; }
+  .cutbox #cutLabel { width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
 .cutbox.layer #cutLabel { color: #ffd98a; }
 .blk { display: inline-flex; align-items: center; gap: 6px; }
 .blk[hidden] { display: none; }

@@ -576,7 +576,7 @@ function showCut() {
   if (lab.textContent === txt) return;
   // подпись въезжает с той стороны, куда двинули срез
   const d = cutShown === null || !L ? 0 : Math.sign(v - cutShown); cutShown = v;
-  lab.textContent = txt;
+  lab.textContent = txt; lab.title = txt;
   if (d && !calm()) lab.animate([{ opacity: 0, transform: `translateY(${d * 6}px)` }, {}], { duration: 180, easing: EASE.out });
   $('#cutDn').disabled = v <= lo; $('#cutUp').disabled = v >= hi;
 }
