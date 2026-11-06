@@ -606,6 +606,12 @@ export class Viewer {
     return [...blocks, ...ents];
   }
   seqLen() { return this.digCells(this.k).length + this.putMeshes().length; }
+  // сколько «блоков» шага уже на месте прямо сейчас (посреди анимации тоже): с этого места листает «по одному блоку»
+  progress() {
+    if (this.seq) return this.sub ?? this.seq.dig.length + this.seq.put.length;
+    const dig = this.digs.length ? this.digs.filter(d => d.broken).length : this.digCells(this.k).length;
+    return dig + this.putMeshes().filter(m => !m.userData.wait).length;
+  }
   scrub(i) {
     this.paused = false;
     if (!this.seq) {

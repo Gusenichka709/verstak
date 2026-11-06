@@ -191,10 +191,11 @@ function buildPanel() {
       <h4>Материалы на всю ферму <small class="mh"></small></h4>
       <div class="mbox"><div><ul class="chips all">${matList()}</ul></div></div>
     </section>
+    ${calcBlock()}
     <button class="linkbtn" id="ckReset" hidden>Сбросить галочки</button>`;
   P.scrollTop = 0;
   shownK = 0; outAnim = null;
-  stepChecks(); matHead();
+  stepChecks(); matHead(); calcSync();
   stagger(P);
   if (booted) enter(P.children, KF.rise, { dur: 320, step: 55 });
 }
@@ -338,8 +339,11 @@ function toggleStep(k, from) {
   if (all && !calm()) $('#panel .prog').animate(KF.pop, { duration: 420, easing: EASE.spring });
 }
 function initChecks() {
+  $('#panel').addEventListener('input', e => { if (e.target.id === 'cN') calcSync(); });
   $('#panel').addEventListener('click', e => {
     const t = e.target;
+    const go = t.closest('.calc1 a[data-item]');
+    if (go) { save('calcItem', go.dataset.item); return; }
     const sc = t.closest('.steps .ck');
     if (sc) return toggleStep(+sc.dataset.ck, sc);
     if (t.closest('#sDone')) {
@@ -373,6 +377,115 @@ function initChecks() {
       stepChecks(); matHead();
     }
   });
+}
+
+/* ---------- калькулятор: сколько модулей строить под нужный выход ---------- */
+// calc в файле фермы: { item, rate: [мин, макс] в час с одного unit, unit, base — сколько unit в показанной постройке,
+//   fixed — начала названий материалов, которые не умножаются, max, note }
+const avgRate = f => (f.calc.rate[0] + f.calc.rate[1]) / 2;
+const unitsFor = (f, perH) => Math.max(1, Math.ceil(perH / avgRate(f)));
+const fmt = n => n >= 10000 ? Math.round(n / 1000) + 'k' : String(Math.round(n));
+// материалы на n unit: постройка в гайде — это base unit, делим и округляем вверх
+function matsFor(f, n) {
+  // fixed — что ставится один раз на всю ферму (сундук, наблюдатель на ряд): не умножаем
+  const b = f.calc?.base || 1, fix = f.calc?.fixed || [], out = [];
+  const one = k => fix.some(x => k.startsWith(x));
+  for (const [k, c] of [...farmMats(f), ...(f.extra || [])]) out.push([k, one(k) ? c : Math.ceil(c * n / b)]);
+  return out;
+}
+const unitWord = (u, n) => {
+  const forms = { 'модуль': ['модуль', 'модуля', 'модулей'], 'росток': ['росток', 'ростка', 'ростков'], 'ряд': ['ряд', 'ряда', 'рядов'], 'печь': ['печь', 'печи', 'печей'], 'житель': ['житель', 'жителя', 'жителей'], 'платформа': ['платформа', 'платформы', 'платформ'], 'спавнер': ['спавнер', 'спавнера', 'спавнеров'] }[u];
+  if (!forms) return u;
+  const a = n % 10, b = n % 100;
+  return forms[a === 1 && b !== 11 ? 0 : a >= 2 && a <= 4 && (b < 12 || b > 14) ? 1 : 2];
+};
+// число меняется — коротко «подпрыгивает»
+function bump(el, txt) {
+  if (el.textContent === txt) return;
+  el.textContent = txt;
+  if (!calm()) el.animate([{ transform: 'translateY(-3px) scale(1.08)', color: '#ffd98a' }, {}], { duration: 260, easing: EASE.out });
+}
+
+// блок в панели фермы: ползунок «сколько unit» и пересчёт выхода и материалов
+function calcBlock() {
+  const c = farm.calc;
+  if (!c) return '';
+  const max = Math.max(c.max || 8, c.base || 1), n0 = c.base || 1;
+  return `<section class="block calc1">
+      <h4>Сколько строить</h4>
+      <label class="crow"><span id="cNl"></span> <input type="range" id="cN" min="1" max="${max}" value="${n0}"> <b id="cNv">${n0}</b></label>
+      <p class="cout">≈ <b id="cOut"></b> ${esc(c.item)} в час</p>
+      ${c.note ? `<p class="cnote">${esc(c.note)}</p>` : ''}
+      <ul class="chips cmats" id="cMats"></ul>
+      <a class="linkbtn" href="#calc" data-item="${esc(c.item)}">Подобрать под нужный выход →</a>
+    </section>`;
+}
+function calcSync() {
+  const c = farm.calc, inp = $('#cN');
+  if (!c || !inp) return;
+  const n = +inp.value;
+  $('#cNl').textContent = unitWord(c.unit, 5).replace(/^./, s => s.toUpperCase());
+  bump($('#cNv'), String(n));
+  bump($('#cOut'), `${fmt(c.rate[0] * n)}–${fmt(c.rate[1] * n)}`);
+  $('#cMats').innerHTML = matsFor(farm, n).map(([k, v]) => `<li><span>${esc(k)}</span><b>×${v}</b></li>`).join('');
+}
+
+// вкладка «Расчёт»: выбираешь ресурс и сколько нужно в час — получаешь фермы по уровням
+let calcItem = null, calcTier = 0;
+function renderCalc() {
+  const fs = farms.filter(f => f.calc), items = [...new Set(fs.map(f => f.calc.item))];
+  calcItem = load('calcItem', items[0]); if (!items.includes(calcItem)) calcItem = items[0];
+  $('#v-calc').innerHTML = `
+    <div class="sheethead">
+      <h2>Расчёт фермы</h2>
+      <p>Выбери, что нужно, и сколько в час. Подберу фермы по уровням: сколько модулей строить и что на это уйдёт.</p>
+    </div>
+    <div class="calcwrap">
+      <div class="calcin">
+        <div class="pchips" id="ciItems" role="group" aria-label="Что нужно">${items.map(i => `<button data-i="${esc(i)}" aria-pressed="${i === calcItem}">${esc(i)}</button>`).join('')}</div>
+        <label class="crow big">Нужно в час <input type="number" id="ciN" min="1" step="10" inputmode="numeric"> <span class="cunit"></span></label>
+        <div class="pchips" id="ciTier" role="group" aria-label="Уровень">${[0, 1, 2, 3].map(t => `<button data-t="${t}" aria-pressed="${t === calcTier}">${t ? `${tierHtml(t)} ${TIERS[t][0]}` : 'любой уровень'}</button>`).join('')}</div>
+      </div>
+      <div class="calcres" id="ciRes" aria-live="polite"></div>
+    </div>`;
+  const N = $('#ciN');
+  N.value = load('calcN', 0) || Math.round(avgRate(fs.find(f => f.calc.item === calcItem)) * 2 / 10) * 10;
+  $('#ciItems').onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    calcItem = b.dataset.i; save('calcItem', calcItem);
+    $('#ciItems').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    calcRes(true);
+  };
+  $('#ciTier').onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    calcTier = +b.dataset.t;
+    $('#ciTier').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    calcRes(true);
+  };
+  let t = 0;
+  N.oninput = () => { clearTimeout(t); t = setTimeout(() => { save('calcN', +N.value || 0); calcRes(false); }, 120); };
+  calcRes(false);
+}
+function calcRes(animate) {
+  const perH = Math.max(1, +$('#ciN').value || 1);
+  const fs = farms.filter(f => f.calc && f.calc.item === calcItem && (!calcTier || (f.tier || 1) === calcTier))
+    .sort((a, b) => (a.tier || 1) - (b.tier || 1) || unitsFor(a, perH) - unitsFor(b, perH));
+  const box = $('#ciRes');
+  if (!fs.length) { box.innerHTML = `<p class="cempty">Для «${esc(calcItem)}» на этом уровне ферм пока нет. Выбери другой уровень.</p>`; return; }
+  box.innerHTML = fs.map(f => {
+    const c = f.calc, n = unitsFor(f, perH), over = c.max && n > c.max, m = matsFor(f, n);
+    return `<article class="ccard${over ? ' over' : ''}">
+      <header><b>${esc(f.title)}</b>${tierHtml(f.tier || 1)}</header>
+      <p class="cbig"><em>${n}</em> ${esc(unitWord(c.unit, n))} → ${fmt(c.rate[0] * n)}–${fmt(c.rate[1] * n)} в час</p>
+      ${over ? `<p class="cwarn">Это больше разумного предела (${c.max}). Возьми ферму уровнем выше или раздели по разным местам.</p>` : ''}
+      ${c.note ? `<p class="cnote">${esc(c.note)}</p>` : ''}
+      <ul class="chips">${m.slice(0, 8).map(([k, v]) => `<li><span>${esc(k)}</span><b>×${v}</b></li>`).join('')}</ul>
+      ${m.length > 8 ? `<p class="cnote">и ещё ${m.length - 8} — в самой ферме</p>` : ''}
+      <a class="btn" href="#${f.id}">Открыть схему →</a>
+    </article>`;
+  }).join('');
+  $('#v-calc .cunit').textContent = calcItem;
+  if (animate) enter(box.children, KF.rise, { dur: 260, step: 50 });
 }
 
 /* ---------- плашка шага над 3D ---------- */
@@ -413,7 +526,13 @@ function syncBlk() { const n = viewer.seqLen(), sc = $('#bScrub'); $('#blk').hid
 // настройка вида сбрасывает «по одному блоку», ползунок должен это знать
 function setOpt(o) { viewer.set(o); syncBlk(); }
 function blkLabel() { const sc = $('#bScrub'); $('#bLbl').textContent = `блок ${sc.value}/${sc.max}`; }
-function blkGo(v) { stopPlay(); const sc = $('#bScrub'); sc.value = Math.max(0, Math.min(+sc.max, v)); viewer.scrub(+sc.value); blkLabel(); }
+// на паузе «Собрать с нуля» листаем блоки от места, где стройка застыла, и сборка не сбрасывается:
+// «Продолжить» потом достроит шаг с этого блока
+function blkGo(v) {
+  if (playing && !playing.paused) pausePlay(true);
+  else if (!playing) stopPlay();
+  const sc = $('#bScrub'); sc.max = viewer.seqLen(); sc.value = Math.max(0, Math.min(+sc.max, v)); viewer.scrub(+sc.value); blkLabel();
+}
 const blkWord = n => n % 10 === 1 && n % 100 !== 11 ? 'блок' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'блока' : 'блоков';
 let cutShown = null;
 function showCut() {
@@ -486,7 +605,14 @@ function pausePlay(on) {
   const b = $('#play');
   playing.paused = on; viewer.pause(on); b.classList.toggle('paused', on);
   if (on) { clearTimeout(playing.timer); playing.left = Math.max(0, playing.due - performance.now()); playLabel('▶ Продолжить'); }
-  else { playLabel('⏸ Пауза'); playArm(playing.left); }
+  else { playLabel('⏸ Пауза'); if (viewer.seq) playBlocks(); else playArm(playing.left); }
+}
+// после ручного «по одному блоку» достраиваем шаг блок за блоком, потом — дальше по шагам
+function playBlocks() {
+  const sc = $('#bScrub'), n = viewer.seqLen(), i = viewer.progress();
+  if (i >= n) return playArm(1100);
+  sc.value = i + 1; viewer.scrub(i + 1); blkLabel();
+  playing.timer = setTimeout(playBlocks, i < viewer.digCells(viewer.k).length ? 40 : 120);
 }
 function play() {
   if (playing) return pausePlay(!playing.paused);
@@ -566,8 +692,8 @@ function initControls() {
   $('#play').onclick = play;
   $('#stop').onclick = () => stopPlay();
   $('#bScrub').oninput = e => blkGo(+e.target.value);
-  $('#bPrev').onclick = () => blkGo(+$('#bScrub').value - 1);
-  $('#bNext').onclick = () => blkGo(+$('#bScrub').value + 1);
+  $('#bPrev').onclick = () => blkGo(viewer.progress() - 1);
+  $('#bNext').onclick = () => blkGo(viewer.progress() + 1);
   $('#replay').onclick = () => { stopPlay(); setStep(viewer.k, true, true); };
   $('#demoBtn').onclick = () => { setOpt({ demo: !viewer.opt.demo }); $('#demoBtn').setAttribute('aria-pressed', viewer.opt.demo); };
   // ползунок шлёт input чаще кадров: применяем не больше раза за кадр
@@ -739,7 +865,8 @@ function viewIn(v) {
 }
 function route() {
   const h = location.hash.slice(1);
-  const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы' };
+  const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы', calc: 'Расчёт' };
+  if (h === 'calc') renderCalc();
   const sheet = SHEETS[h] ? h : null;
   $('#v-farms').hidden = !!sheet;
   for (const k in SHEETS) $('#v-' + k).hidden = sheet !== k;
