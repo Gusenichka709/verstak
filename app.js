@@ -1,7 +1,8 @@
 // Интерфейс: вкладки, выбор фермы, шаги, материалы, шпаргалки.
 import { Viewer, expandPut } from './engine.js';
 import { BLOCKS, ENTS } from './blocks.js';
-import FARM_IDS from './farms/index.js';
+import FARM_IDS, { CATS, TIERS } from './farms/index.js';
+import { load, save } from './store.js';
 import VIL from './cheats/villagers.js';
 import POT from './cheats/potions.js';
 import BREW from './cheats/brew.js';
@@ -82,15 +83,60 @@ if (COUNT) document.documentElement.classList.add('cnt');
 const chips = (m, cnt) => [...m].map(([n, c]) => `<li data-n="${esc(n)}"><span>${esc(n)}</span><b${cnt ? ` style="--n:${c}"` : ''}><span>×${c}</span></b></li>`).join('');
 
 /* ---------- выбор фермы: рисуем один раз, дальше только переключаем ---------- */
+// порядок списка: по категориям, внутри — по уровню, дальше как в farms/index.js
+const catIdx = id => CATS.findIndex(c => c[0] === id);
+const ordered = () => farms.map((f, i) => [f, i])
+  .sort(([a, i], [b, j]) => (catIdx(a.cat) - catIdx(b.cat)) || ((a.tier || 1) - (b.tier || 1)) || i - j).map(x => x[0]);
+const tierHtml = t => `<span class="tier" data-t="${t}" title="Уровень ${t}: ${TIERS[t][0]} — ${TIERS[t][1]}" aria-label="уровень ${t}"><i></i><i></i><i></i></span>`;
+let pfilt = load('filter', 'all');
 function renderPicker() {
-  $('#picker').innerHTML = farms.map(f => `
-    <a class="pick" href="#${f.id}" data-id="${f.id}" aria-current="false">
-      <b>${esc(f.title)}</b><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i>
-    </a>`).join('') + '<span class="pickbar" aria-hidden="true"></span>';
-  stagger($('#picker'), '.pick');
+  const used = CATS.filter(([id]) => farms.some(f => f.cat === id));
+  if (pfilt !== 'all' && !used.some(c => c[0] === pfilt)) pfilt = 'all';
+  const btn = (id, n, c) => `<button data-cat="${id}" aria-pressed="${pfilt === id}">${esc(n)} <b>${c}</b></button>`;
+  let last = null, list = '';
+  for (const f of ordered()) {
+    if (f.cat !== last) { last = f.cat; list += `<h5 data-cat="${f.cat}">${esc(CATS[catIdx(f.cat)]?.[1] || 'Разное')}</h5>`; }
+    list += `<a class="pick" href="#${f.id}" data-id="${f.id}" data-cat="${f.cat}" aria-current="false">
+      <span class="row"><b>${esc(f.title)}</b><span class="rt"><small class="pp"></small>${tierHtml(f.tier || 1)}</span></span><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i><em class="pbar" aria-hidden="true"></em>
+    </a>`;
+  }
+  $('#picker').innerHTML = `<div class="pchips pfilt" role="group" aria-label="Категории">${btn('all', 'Все', farms.length)}${used.map(([id, n]) => btn(id, n, farms.filter(f => f.cat === id).length)).join('')}</div>
+    <div class="plist">${list}<span class="pickbar" aria-hidden="true"></span></div>`;
+  applyFilter(false);
+  stagger($('#picker .plist'), '.pick');
+  farms.forEach(f => pickProg(f));
+  $('#picker .pfilt').onclick = e => {
+    const b = e.target.closest('button');
+    if (!b || b.dataset.cat === pfilt) return;
+    pfilt = b.dataset.cat; save('filter', pfilt);
+    $('#picker .pfilt').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    applyFilter(true);
+  };
+}
+// фильтр: лишние карточки гаснут, нужные въезжают лесенкой, метка выбранной едет следом
+let filterGen = 0;
+function applyFilter(animate) {
+  const box = $('#picker .plist'), gen = ++filterGen;
+  const want = el => el.tagName === 'H5' ? pfilt === 'all' : pfilt === 'all' || el.dataset.cat === pfilt;
+  const gone = [], come = [];
+  for (const el of box.querySelectorAll('.pick, h5')) {
+    el.getAnimations().forEach(a => a.cancel());
+    if (want(el) !== el.hidden) continue;
+    (el.hidden ? come : gone).push(el);
+  }
+  const done = () => {
+    if (gen !== filterGen) return; // пока гасли, нажали другой фильтр
+    gone.forEach(el => (el.hidden = true));
+    come.forEach(el => (el.hidden = false));
+    movePickBar();
+    if (animate) enter(come.filter(el => el.classList.contains('pick')), KF.rise, { dur: 260, step: 45 });
+  };
+  if (!animate || calm() || !gone.length) return done();
+  Promise.all(gone.map(el => el.animate([{}, { opacity: 0, transform: 'scale(.96)' }], { duration: 140, easing: EASE.in, fill: 'forwards' }).finished))
+    .then(() => { done(); gone.forEach(el => el.getAnimations().forEach(a => a.cancel())); }, () => {});
 }
 function syncPicker(scroll) {
-  const box = $('#picker');
+  const box = $('#picker .plist');
   let on = null;
   for (const a of box.querySelectorAll('.pick')) {
     const me = a.dataset.id === farm.id;
@@ -99,10 +145,13 @@ function syncPicker(scroll) {
   }
   movePickBar();
   // в строчной раскладке выбранная карточка не должна уехать за край
-  if (scroll && on && ROW.matches) on.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: calm() ? 'auto' : 'smooth' });
+  if (scroll && on && !on.hidden && ROW.matches) on.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: calm() ? 'auto' : 'smooth' });
 }
 function movePickBar() {
-  const box = $('#picker'), on = box.querySelector('.pick.on'), bar = box.querySelector('.pickbar');
+  const box = $('#picker .plist'), on = box?.querySelector('.pick.on'), bar = box?.querySelector('.pickbar');
+  if (!bar) return;
+  // выбранную ферму спрятал фильтр — метка гаснет, а не висит над чужой карточкой
+  bar.style.visibility = on && !on.hidden ? '' : 'hidden';
   if (!on || !on.offsetWidth) return;
   const row = ROW.matches;
   bar.style.width = (row ? on.offsetWidth - 8 : 4) + 'px';
@@ -115,11 +164,12 @@ function movePickBar() {
 let shownK = 0, shownDir = 0, outAnim = null, uiRaf = 0;
 function buildPanel() {
   const N = farm.steps.length, P = $('#panel');
+  ck = ckOf(farm);
   P.innerHTML = `
     <header class="farmhead">
       <h2>${esc(farm.title)}</h2>
       <p>${esc(farm.short)}</p>
-      <div class="badges">${farm.badges.map(b => `<span>${esc(b)}</span>`).join('')}</div>
+      <div class="badges">${farm.badges.map(b => `<span>${esc(b)}</span>`).join('')}<span class="tb" title="${esc(TIERS[farm.tier || 1][1])}">${tierHtml(farm.tier || 1)}ур. ${farm.tier || 1} · ${TIERS[farm.tier || 1][0]}</span></div>
       <dl class="stats">${farm.stats.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl>
     </header>
     <article class="stepcard">
@@ -127,21 +177,24 @@ function buildPanel() {
       <div class="sbody" aria-live="polite"></div>
       <div class="stepnav">
         <button class="btn" id="sPrev" data-go="0">← Назад</button>
+        <button class="btn ckbtn" id="sDone" aria-pressed="false"><i class="ck">${CK_SVG}</i><span>Сделал</span></button>
         <button class="btn primary" id="sNext" data-go="2">Дальше →</button>
       </div>
     </article>
     <section class="block">
       <h4>Все шаги</h4>
       <div class="stepswrap still"><span class="steppill" aria-hidden="true"></span>
-        <ol class="steps">${farm.steps.map((x, i) => `<li><button class="${i + 1 < curK ? 'done' : i + 1 === curK ? 'on' : ''}" data-go="${i + 1}"><em>${i + 1}</em><span>${esc(x.t)}</span></button></li>`).join('')}</ol>
+        <ol class="steps">${farm.steps.map((x, i) => `<li><button class="${i + 1 < curK ? 'done' : i + 1 === curK ? 'on' : ''}" data-go="${i + 1}"><em>${i + 1}</em><span>${esc(x.t)}</span></button><button class="ck" data-ck="${i + 1}" aria-pressed="false" aria-label="Шаг ${i + 1} сделан">${CK_SVG}</button></li>`).join('')}</ol>
       </div>
     </section>
-    <section class="block">
-      <h4>Материалы на всю ферму</h4>
-      <ul class="chips all">${chips(farmMats(farm))}${(farm.extra || []).map(([n, c]) => `<li class="mob"><span>${esc(n)}</span><b>×${c}</b></li>`).join('')}</ul>
-    </section>`;
+    <section class="block mats">
+      <h4>Материалы на всю ферму <small class="mh"></small></h4>
+      <div class="mbox"><div><ul class="chips all">${matList()}</ul></div></div>
+    </section>
+    <button class="linkbtn" id="ckReset" hidden>Сбросить галочки</button>`;
   P.scrollTop = 0;
   shownK = 0; outAnim = null;
+  stepChecks(); matHead();
   stagger(P);
   if (booted) enter(P.children, KF.rise, { dur: 320, step: 55 });
 }
@@ -182,11 +235,11 @@ function updateStep(k, dir) {
   pv.dataset.go = k - 1; pv.disabled = k <= 1;
   nx.dataset.go = k + 1; nx.disabled = k >= N;
   P.querySelector('.prog').style.setProperty('--p', k / N);
-  P.querySelectorAll('.steps button').forEach((b, i) => {
+  P.querySelectorAll('.steps button[data-go]').forEach((b, i) => {
     b.classList.toggle('on', i + 1 === k); b.classList.toggle('done', i + 1 < k);
     if (i + 1 === k) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
   });
-  moveStepPill();
+  moveStepPill(); stepChecks();
   // в «Материалах на всю ферму» подсвечиваем то, что идёт в этот шаг
   const need = materials(farm, k);
   P.querySelectorAll('.chips.all li[data-n]').forEach(li => {
@@ -215,6 +268,111 @@ function syncUI() {
   uiRaf = 0;
   if (shownK !== curK) updateStep(curK, shownK ? Math.sign(curK - shownK) : 0);
   updateControls();
+}
+
+/* ---------- галочки: шаги и материалы, помним для каждой фермы ---------- */
+// хранится как prog:<id> = { s: [номера шагов], m: [названия материалов] }
+const CK_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
+const ckOf = f => { const p = load('prog:' + f.id, {}); return { s: new Set(p.s || []), m: new Set(p.m || []) }; };
+let ck = { s: new Set(), m: new Set() };
+function ckSave() {
+  save('prog:' + farm.id, ck.s.size || ck.m.size ? { s: [...ck.s], m: [...ck.m] } : undefined);
+  pickProg(farm);
+}
+// полоска прогресса на карточке фермы в списке
+function pickProg(f, c = f === farm ? ck : ckOf(f)) {
+  const a = $(`#picker .pick[data-id="${f.id}"]`);
+  if (!a) return;
+  const n = [...c.s].filter(k => k >= 1 && k <= f.steps.length).length, N = f.steps.length;
+  a.style.setProperty('--pp', n / N);
+  a.classList.toggle('built', n === N);
+  const t = a.querySelector('.pp');
+  t.textContent = n ? (n === N ? '✓ построено' : `${n}/${N}`) : '';
+}
+const matKeys = () => [...farmMats(farm).keys(), ...(farm.extra || []).map(([n]) => n)];
+// разметка списка «Материалы на всю ферму»: каждая строка — кнопка-галочка
+function matList() {
+  const row = (n, c, mob) => `<li data-n="${esc(n)}"${mob ? ' class="mob"' : ''}><button class="mk" aria-pressed="${ck.m.has(n)}"><span class="ck">${CK_SVG}</span><span class="nm">${esc(n)}</span><b>×${c}</b></button></li>`;
+  return [...farmMats(farm)].map(([n, c]) => row(n, c)).join('') + (farm.extra || []).map(([n, c]) => row(n, c, true)).join('');
+}
+function matHead(animate) {
+  const box = $('#panel .mats'); if (!box) return;
+  const keys = matKeys(), n = keys.filter(k => ck.m.has(k)).length, full = n === keys.length && n > 0;
+  box.querySelector('.mh').textContent = full ? '✓ всё собрано' : n ? `собрано ${n} из ${keys.length}` : 'нажимай, когда собрал';
+  const was = box.classList.contains('full');
+  box.classList.toggle('full', full);
+  if (full !== was) box.classList.remove('open');
+  if (full && !was && animate && !calm()) box.querySelector('h4').animate(KF.pop, { duration: 420, easing: EASE.spring });
+  const any = ck.s.size || ck.m.size;
+  badge($('#ckReset'), !!any);
+}
+function stepChecks() {
+  $('#panel').querySelectorAll('.steps li').forEach((li, i) => {
+    const on = ck.s.has(i + 1);
+    li.classList.toggle('did', on);
+    li.querySelector('.ck').setAttribute('aria-pressed', on);
+  });
+  const d = $('#sDone');
+  if (d) { const on = ck.s.has(curK); d.setAttribute('aria-pressed', on); d.querySelector('span').textContent = on ? 'Сделано' : 'Сделал'; }
+}
+// искры от галочки: несколько квадратиков разлетаются и гаснут (только transform/opacity)
+function sparks(el, n = 6, color = 'var(--em)') {
+  if (calm()) return;
+  const r = el.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  for (let i = 0; i < n; i++) {
+    const s = document.createElement('i'), a = (i / n) * Math.PI * 2 + Math.random() * .6, d = 18 + Math.random() * 16 + n;
+    s.className = 'spark'; s.style.background = color; s.style.left = cx + 'px'; s.style.top = cy + 'px';
+    document.body.appendChild(s);
+    s.animate([{ transform: 'translate(-50%,-50%) scale(1)', opacity: 1 }, { transform: `translate(calc(-50% + ${Math.cos(a) * d}px), calc(-50% + ${Math.sin(a) * d}px)) scale(.2) rotate(${90 + Math.random() * 180}deg)`, opacity: 0 }],
+      { duration: 420 + Math.random() * 200, easing: EASE.out }).onfinish = () => s.remove();
+  }
+}
+function toggleStep(k, from) {
+  const on = !ck.s.has(k);
+  if (on) ck.s.add(k); else ck.s.delete(k);
+  ckSave(); stepChecks(); matHead();
+  if (!on || !from) return;
+  if (!calm()) from.animate(KF.pop, { duration: 360, easing: EASE.spring });
+  const all = ck.s.size >= farm.steps.length && farm.steps.every((_, i) => ck.s.has(i + 1));
+  sparks(from, all ? 16 : 6, all ? 'var(--gold)' : 'var(--em)');
+  if (all && !calm()) $('#panel .prog').animate(KF.pop, { duration: 420, easing: EASE.spring });
+}
+function initChecks() {
+  $('#panel').addEventListener('click', e => {
+    const t = e.target;
+    const sc = t.closest('.steps .ck');
+    if (sc) return toggleStep(+sc.dataset.ck, sc);
+    if (t.closest('#sDone')) {
+      const k = curK, b = $('#sDone'), was = ck.s.has(k);
+      toggleStep(k, b);
+      // отметил шаг на карточке — через миг листаем дальше, чтобы галочка успела «щёлкнуть»
+      if (!was && k < farm.steps.length) setTimeout(() => { if (curK === k && ck.s.has(k)) { stopPlay(); setStep(k + 1, true); } }, calm() ? 0 : 420);
+      return;
+    }
+    const mk = t.closest('.mats .mk');
+    if (mk) {
+      const n = mk.parentElement.dataset.n, on = !ck.m.has(n);
+      if (on) ck.m.add(n); else ck.m.delete(n);
+      mk.setAttribute('aria-pressed', on);
+      if (on && !calm()) { mk.querySelector('.ck').animate(KF.pop, { duration: 320, easing: EASE.spring }); sparks(mk.querySelector('.ck'), 5); }
+      ckSave(); matHead(true);
+      return;
+    }
+    if (t.closest('.mats.full h4')) { $('#panel .mats').classList.toggle('open'); return; }
+    const rs = t.closest('#ckReset');
+    if (rs) {
+      // сброс — в два нажатия: случайно стереть прогресс постройки обидно
+      if (!rs.classList.contains('sure')) {
+        rs.classList.add('sure'); rs.textContent = 'Точно сбросить?';
+        clearTimeout(rs.t); rs.t = setTimeout(() => { rs.classList.remove('sure'); rs.textContent = 'Сбросить галочки'; }, 2500);
+        return;
+      }
+      clearTimeout(rs.t); rs.classList.remove('sure'); rs.textContent = 'Сбросить галочки';
+      ck = { s: new Set(), m: new Set() }; ckSave();
+      $('#panel').querySelectorAll('.mats .mk').forEach(b => b.setAttribute('aria-pressed', 'false'));
+      stepChecks(); matHead();
+    }
+  });
 }
 
 /* ---------- плашка шага над 3D ---------- */
@@ -256,10 +414,25 @@ function syncBlk() { const n = viewer.seqLen(), sc = $('#bScrub'); $('#blk').hid
 function setOpt(o) { viewer.set(o); syncBlk(); }
 function blkLabel() { const sc = $('#bScrub'); $('#bLbl').textContent = `блок ${sc.value}/${sc.max}`; }
 function blkGo(v) { stopPlay(); const sc = $('#bScrub'); sc.value = Math.max(0, Math.min(+sc.max, v)); viewer.scrub(+sc.value); blkLabel(); }
+const blkWord = n => n % 10 === 1 && n % 100 !== 11 ? 'блок' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'блока' : 'блоков';
+let cutShown = null;
 function showCut() {
-  const v = +$('#cut').value, hi = +$('#cut').max;
-  const name = farm.levels?.[v];
-  $('#cutLabel').textContent = v >= hi ? 'всё видно' : `до y=${v}${name ? ' · ' + name : ''}`;
+  const v = +$('#cut').value, hi = +$('#cut').max, lo = +$('#cut').min, L = viewer?.opt.layer;
+  const name = farm.levels?.[v], lab = $('#cutLabel'), n = L ? viewer.layerCount(v) : 0;
+  const txt = L ? `слой y=${v} · ${n ? n + ' ' + blkWord(n) : 'пусто'}${name ? ' · ' + name : ''}` : v >= hi ? 'всё видно' : `до y=${v}${name ? ' · ' + name : ''}`;
+  if (lab.textContent === txt) return;
+  // подпись въезжает с той стороны, куда двинули срез
+  const d = cutShown === null || !L ? 0 : Math.sign(v - cutShown); cutShown = v;
+  lab.textContent = txt;
+  if (d && !calm()) lab.animate([{ opacity: 0, transform: `translateY(${d * 6}px)` }, {}], { duration: 180, easing: EASE.out });
+  $('#cutDn').disabled = v <= lo; $('#cutUp').disabled = v >= hi;
+}
+// ▲▼: ряд выше или ниже; в обычном срезе верхний край — «всё видно»
+function cutGo(v) {
+  const c = $('#cut'), hi = +c.max, lo = +c.min;
+  v = Math.max(lo, Math.min(hi, v));
+  c.value = v; viewer.cutReset = false; viewer.cutAuto = false;
+  setOpt({ cut: v >= hi && !viewer.opt.layer ? null : v }); showCut(); chip();
 }
 function showFarm(f) {
   stopPlay();
@@ -269,7 +442,8 @@ function showFarm(f) {
       viewer.setFarm(f);
       const gm = f.ground?.mode || 'glass';
       document.querySelectorAll('[name=ground]').forEach(r => (r.checked = r.value === gm));
-      viewer.set({ cut: f.cut ?? null, ground: gm });
+      viewer.set({ cut: f.cut ?? null, ground: gm, layer: false });
+      $('#layer').checked = false; $('.cutbox').classList.remove('layer');
       viewer.goto(f.steps.length, { animate: false }); curK = viewer.k;
     } else curK = f.steps.length;
     // новая ферма — сразу, без кадра с пустой карточкой
@@ -286,31 +460,44 @@ function playLabel(t) {
   s.textContent = t;
   if (!calm()) s.animate([{ opacity: 0, transform: 'translateY(4px)' }, {}], { duration: 160, easing: EASE.out });
 }
+// playing: { timer, due — когда следующий шаг, left — сколько оставалось на паузе }
 function stopPlay(done) {
   if (!playing) return;
-  clearTimeout(playing); playing = null;
+  clearTimeout(playing.timer); playing = null;
+  if (!done) viewer?.halt(); // стоп — шаг встаёт сразу, ничего не доставляется в фоне
   const b = $('#play');
-  b.classList.remove('playing'); b.setAttribute('aria-pressed', 'false');
+  b.classList.remove('playing', 'paused'); b.setAttribute('aria-pressed', 'false');
   playLabel('▶ Собрать с нуля');
+  badge($('#stop'), false);
   if (done && !calm()) { b.animate(KF.pop, { duration: 360, easing: EASE.spring }); $('#panel .prog')?.animate(KF.pop, { duration: 360, easing: EASE.spring }); }
   setTimeout(() => { if (!playing) b.style.setProperty('--p', 0); }, 300);
 }
+// следующий шаг — когда докопали и достроили текущий
+const playWait = () => Math.max(2200, viewer.animLeft() * 1000 + 1100);
+function playArm(ms) { playing.due = performance.now() + ms; playing.timer = setTimeout(playTick, ms); }
+function playTick() {
+  if (viewer.k >= farm.steps.length) return stopPlay(true);
+  setStep(viewer.k + 1, true);
+  $('#play').style.setProperty('--p', viewer.k / farm.steps.length);
+  playArm(playWait());
+}
+function pausePlay(on) {
+  if (!playing || !!playing.paused === on) return;
+  const b = $('#play');
+  playing.paused = on; viewer.pause(on); b.classList.toggle('paused', on);
+  if (on) { clearTimeout(playing.timer); playing.left = Math.max(0, playing.due - performance.now()); playLabel('▶ Продолжить'); }
+  else { playLabel('⏸ Пауза'); playArm(playing.left); }
+}
 function play() {
-  if (playing) return stopPlay();
+  if (playing) return pausePlay(!playing.paused);
   const b = $('#play'), N = farm.steps.length;
+  playing = {};
   b.classList.add('playing'); b.setAttribute('aria-pressed', 'true');
-  playLabel('■ Стоп');
+  playLabel('⏸ Пауза');
+  badge($('#stop'), true);
   setStep(1, true, true);
   b.style.setProperty('--p', 1 / N);
-  // следующий шаг — когда докопали и достроили текущий
-  const wait = () => Math.max(2200, viewer.animLeft() * 1000 + 1100);
-  const tick = () => {
-    if (viewer.k >= farm.steps.length) return stopPlay(true);
-    setStep(viewer.k + 1, true);
-    b.style.setProperty('--p', viewer.k / N);
-    playing = setTimeout(tick, wait());
-  };
-  playing = setTimeout(tick, wait());
+  playArm(playWait());
 }
 
 function initFarmsView() {
@@ -377,6 +564,7 @@ function initControls() {
   $('#prev').onclick = () => { stopPlay(); setStep(viewer.k - 1, false); };
   $('#next').onclick = () => { stopPlay(); setStep(viewer.k + 1, true); };
   $('#play').onclick = play;
+  $('#stop').onclick = () => stopPlay();
   $('#bScrub').oninput = e => blkGo(+e.target.value);
   $('#bPrev').onclick = () => blkGo(+$('#bScrub').value - 1);
   $('#bNext').onclick = () => blkGo(+$('#bScrub').value + 1);
@@ -391,8 +579,19 @@ function initControls() {
       const v = +$('#cut').value;
       viewer.cutReset = false;
       try { viewer.cutAuto = false; } catch { /* движок мог сделать его только для чтения */ }
-      setOpt({ cut: v >= +$('#cut').max ? null : v }); showCut(); chip();
+      setOpt({ cut: v >= +$('#cut').max && !viewer.opt.layer ? null : v }); showCut(); chip();
     });
+  };
+  $('#cutDn').onclick = () => cutGo(+$('#cut').value - 1);
+  $('#cutUp').onclick = () => cutGo(+$('#cut').value + 1);
+  // по слоям: начинаем с самого нижнего ряда постройки и поднимаемся, как строишь в игре
+  $('#layer').onchange = e => {
+    const on = e.target.checked, lv = viewer.levels();
+    viewer.cutReset = false; viewer.cutAuto = false;
+    if (on) { const lo = Math.floor(viewer.bounds().min.y); $('#cut').value = lo; setOpt({ layer: true, cut: lo }); viewer.fit('iso'); }
+    else { $('#cut').value = lv.hi; setOpt({ layer: false, cut: null }); }
+    $('.cutbox').classList.toggle('layer', on);
+    showCut(); chip();
   };
   $('#hl').onchange = e => setOpt({ highlight: e.target.checked });
   $('#onlyNew').onchange = e => setOpt({ onlyNew: e.target.checked });
@@ -547,7 +746,7 @@ function route() {
   document.querySelectorAll('.tabs a').forEach(a => a.setAttribute('aria-current', (a.dataset.v === (sheet || 'farms')) ? 'page' : 'false'));
   moveTabPill();
   viewIn(sheet || 'farms');
-  if (sheet) { stopPlay(); viewer?.setActive(false); document.title = SHEETS[sheet] + ' — Верстак'; return; }
+  if (sheet) { pausePlay(true); viewer?.setActive(false); document.title = SHEETS[sheet] + ' — Верстак'; return; }
   // размер сцены — до showFarm, чтобы камера вписалась по настоящим пропорциям экрана
   viewer?.setActive(true); viewer?.resize();
   const f = farms.find(x => x.id === h) || farm || farms[0];
@@ -558,12 +757,12 @@ function route() {
 }
 // пиксельный шрифт нужен до первых подписей в 3D
 try { await Promise.race([document.fonts.load('48px Tiny5', 'Жж'), new Promise(r => setTimeout(r, 1500))]); } catch { /* без шрифта тоже работает */ }
-renderVillagers(); renderPotions(); renderTips(); initFarmsView();
+renderVillagers(); renderPotions(); renderTips(); initFarmsView(); initChecks();
 addEventListener('hashchange', route);
 route();
 addEventListener('resize', () => still($('.tabs'), () => {
   moveTabPill();
-  still($('#picker'), movePickBar);
+  still($('#picker .plist'), movePickBar);
   const w = $('#panel .stepswrap'); if (w) still(w, moveStepPill);
 }));
 document.fonts.ready.then(() => { moveTabPill(); movePickBar(); moveStepPill(); });
@@ -574,7 +773,7 @@ setTimeout(() => document.documentElement.classList.remove('boot'), 1100);
 // iOS включает :active только если на странице есть touchstart
 document.addEventListener('touchstart', () => {}, { passive: true });
 // свернули вкладку — «Собрать с нуля» не листает шаги в фоне
-document.addEventListener('visibilitychange', () => { if (document.hidden) stopPlay(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) pausePlay(true); });
 
 // офлайн и установка на телефон (PWA); в превью без https просто не включится
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && document.querySelector('link[rel=manifest]')) {

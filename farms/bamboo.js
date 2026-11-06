@@ -15,6 +15,7 @@ actors.push({ label: 'воронки тянут сквозь грязь', color:
 
 export default {
   id: 'bamboo',
+  cat: 'plant', tier: 2,
   title: 'Ферма бамбука',
   short: 'Автоматическая: наблюдатель видит рост, поршни срезают, воронки собирают.',
   badges: ['Java 26.3', 'авто'],

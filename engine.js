@@ -149,7 +149,10 @@ export class Viewer {
     // своё время анимаций: идёт, только пока сцену рисуют (вкладка шпаргалок, скрытый браузер — пауза)
     this.at = 0; this.demoT0 = 0;
     this.animEnd = 0; this.dirty = true; this.isOn = true; this.onScreen = true; this.lastDraw = 0;
-    this.opt = { ground: 'glass', highlight: true, onlyNew: false, demo: true, cut: null };
+    this.opt = { ground: 'glass', highlight: true, onlyNew: false, demo: true, cut: null, layer: false };
+    // «по слоям»: всё ниже текущего слоя — бледный призрак одним общим материалом (без лишних шейдеров)
+    this.ghostMat = new THREE.MeshBasicMaterial({ color: 0xa9bcc6, transparent: true, opacity: .13, depthWrite: false });
+    this.gridMat = new THREE.LineBasicMaterial({ color: 0xffc94d, transparent: true, opacity: .28, depthWrite: false });
     this.clock = new THREE.Clock();
     this.ray = new THREE.Raycaster(); this.ptr = new THREE.Vector2(); this.lastPick = 0;
     r.domElement.addEventListener('pointermove', e => this.onMove(e));
@@ -297,6 +300,7 @@ export class Viewer {
   /* ---------- шаги ---------- */
   goto(k, { animate = true, replay = false } = {}) {
     k = Math.max(1, Math.min(this.N, k));
+    this.paused = false;
     // тот же шаг (стрелка у края, клик по блоку этого шага) — ничего не перестраиваем
     if (k === this.k && !replay && this.active) { this.cb.onStep && this.cb.onStep(k); return; }
     const prev = this.k; this.k = k;
@@ -363,6 +367,7 @@ export class Viewer {
   fitCut(k) {
     const sb = this.stepBounds(k), G = this.farm.ground;
     this.cutReset = false;
+    if (this.opt.layer) { this.cutAuto = false; return; } // по слоям срез ведёт только сам игрок
     if (this.cutAuto) { this.opt.cut = null; this.cutAuto = false; }
     if (this.opt.cut !== null && sb && sb.max.y - 1 > this.opt.cut) { this.opt.cut = null; this.cutReset = true; }
     if (this.opt.cut === null && G && sb && this.opt.ground === 'solid' && sb.max.y - 1 < G.top) { this.opt.cut = sb.max.y - 1; this.cutAuto = true; }
@@ -602,6 +607,7 @@ export class Viewer {
   }
   seqLen() { return this.digCells(this.k).length + this.putMeshes().length; }
   scrub(i) {
+    this.paused = false;
     if (!this.seq) {
       this.finishAnims();
       this.clearDig(); this.startDig(this.k, Infinity);
@@ -635,6 +641,14 @@ export class Viewer {
     this.dirty = true;
   }
   animLeft() { return Math.max(0, this.animEnd - this.at); }
+  // пауза «Собрать с нуля»: своё время стоит, всё замирает на месте; вращать сцену можно
+  pause(on) { this.paused = on; this.dirty = true; }
+  // стоп: недоигранное в шаге встаёт на место сразу, без анимаций
+  halt() {
+    this.paused = false;
+    this.finishAnims(); this.clearDig(); this.animEnd = 0;
+    this.refreshVisibility(); this.buildHighlights();
+  }
   replay() { this.goto(this.k, { replay: true }); }
   refreshVisibility() {
     this.lavaOn = false;
@@ -642,6 +656,7 @@ export class Viewer {
       m.userData.demoHidden = false; // демо спрячет заново в следующем кадре, если надо
       const v = this.shown(m);
       m.visible = v && !m.userData.wait;
+      this.ghost(m, v && this.opt.layer && this.opt.cut !== null && m.userData.en.y < this.opt.cut);
       if (v && m.userData.en.t === 'lava') this.lavaOn = true;
     }
     // как в игре: стык двух стёкол (и двух клеток воды) не рисуется
@@ -800,6 +815,7 @@ export class Viewer {
 
   /* ---------- настройки ---------- */
   set(opt) {
+    const was = this.opt.cut;
     Object.assign(this.opt, opt);
     if ('cut' in opt) this.cutAuto = false;
     // «по одному блоку» сбрасываем к целому шагу; копание посреди шага не трогаем,
@@ -807,7 +823,17 @@ export class Viewer {
     if (this.seq) this.clearDig();
     else if (('cut' in opt || 'ground' in opt) && (this.anims.length || this.digs.length)) { this.finishAnims(); this.clearDig(); this.animEnd = 0; }
     if ('ground' in opt || 'cut' in opt) this.buildGround();
-    this.refreshVisibility(); this.buildHighlights();
+    this.refreshVisibility();
+    if ('cut' in opt || 'layer' in opt) this.buildGrid();
+    // по слоям поднялись на ряд выше — блоки нового ряда ставятся лесенкой, как в игре
+    if (this.opt.layer && 'cut' in opt && this.opt.cut !== null && was !== null && this.opt.cut === was + 1 && !RM.matches) {
+      const row = [...this.meshes.values()].filter(m => m.visible && m.userData.en.y === this.opt.cut)
+        .sort((a, b) => (a.userData.en.x + a.userData.en.z) - (b.userData.en.x + b.userData.en.z));
+      const gap = Math.min(.04, .45 / Math.max(1, row.length));
+      row.forEach((m, i) => this.addAnim(m, kindOf(m.userData.en), this.at + i * gap));
+      if (row.length) this.animEnd = Math.max(this.animEnd, this.at + row.length * gap + .6);
+    }
+    this.buildHighlights();
     if ('demo' in opt) { this.demoT0 = this.at; if (!opt.demo) this.resetDemo(); }
   }
   bounds() {
@@ -815,6 +841,34 @@ export class Viewer {
     for (const en of this.entries) for (const [x, y, z] of en.cells) { b.expandByPoint(new THREE.Vector3(x, y, z)); b.expandByPoint(new THREE.Vector3(x + 1, y + 1, z + 1)); }
     for (const e of this.ents) b.expandByPoint(new THREE.Vector3(e.x, e.y + 1, e.z));
     return b;
+  }
+  // сетка клеток на полу текущего слоя: удобно считать блоки
+  buildGrid() {
+    if (this.grid) { this.root.remove(this.grid); this.grid.geometry.dispose(); this.grid = null; }
+    const c = this.opt.cut;
+    if (!this.opt.layer || c === null || !this.entries?.length) { this.dirty = true; return; }
+    const b = this.bounds(), x0 = Math.floor(b.min.x) - 1, x1 = Math.ceil(b.max.x) + 1, z0 = Math.floor(b.min.z) - 1, z1 = Math.ceil(b.max.z) + 1, y = c + .01;
+    const P = [];
+    for (let x = x0; x <= x1; x++) P.push(x, y, z0, x, y, z1);
+    for (let z = z0; z <= z1; z++) P.push(x0, y, z, x1, y, z);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+    this.grid = new THREE.LineSegments(g, this.gridMat); this.grid.renderOrder = 3;
+    this.root.add(this.grid); this.dirty = true;
+  }
+  // сколько блоков стоит в ряду y на текущем шаге (для подписи среза)
+  layerCount(y) {
+    let n = 0;
+    for (const id of this.active || []) { const en = this.entries[id]; if (en.y === y && en.t !== 'air' && !(en.t === 'water' && !en.p.src)) n++; }
+    return n;
+  }
+  ghost(m, on) {
+    if (!!m.userData.ghost === on) return;
+    m.userData.ghost = on;
+    m.traverse(o => {
+      if (!o.isMesh) return;
+      if (on) { o.userData.mat0 = o.material; o.material = this.ghostMat; }
+      else if (o.userData.mat0) { o.material = o.userData.mat0; o.userData.mat0 = null; }
+    });
   }
   levels() {
     const b = this.bounds(); const lo = Math.floor(b.min.y), hi = Math.ceil(b.max.y) - 1;
@@ -934,6 +988,11 @@ export class Viewer {
     const real = this.clock.getElapsedTime();
     const dt = Math.min(.05, real - (this.lastT ?? real)); this.lastT = real;
     if (!this.onScreen) return;
+    if (this.paused) {
+      this.controls.update();
+      if (this.dirty) { this.dirty = false; this.renderer.render(this.scene, this.camera); }
+      return;
+    }
     const t = this.at += dt;
     let busy = false;
     if (this.tween) {
