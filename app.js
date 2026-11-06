@@ -85,9 +85,15 @@ const chips = (m, cnt) => [...m].map(([n, c]) => `<li data-n="${esc(n)}"><span>$
 /* ---------- выбор фермы: рисуем один раз, дальше только переключаем ---------- */
 // порядок списка: по категориям, внутри — по уровню, дальше как в farms/index.js
 const catIdx = id => CATS.findIndex(c => c[0] === id);
-const ordered = () => farms.map((f, i) => [f, i])
+const ordered = () => farms.filter(f => !f.of).map((f, i) => [f, i])
   .sort(([a, i], [b, j]) => (catIdx(a.cat) - catIdx(b.cat)) || ((a.tier || 1) - (b.tier || 1)) || i - j).map(x => x[0]);
-const tierHtml = t => `<span class="tier" data-t="${t}" title="Уровень ${t}: ${TIERS[t][0]} — ${TIERS[t][1]}" aria-label="уровень ${t}"><i></i><i></i><i></i></span>`;
+// уровень: 1, 2, 3 или «с плюсом» (1.5 → «1+»: чуть сложнее, например нужен кварц, но рано)
+const tFloor = t => Math.floor(t || 1);
+const tName = t => tFloor(t) + ((t || 1) % 1 ? '+' : '');
+const tierHtml = t => {
+  const b = tFloor(t), plus = (t || 1) % 1;
+  return `<span class="tier${plus ? ' plus' : ''}" data-t="${b}" title="Уровень ${tName(t)}: ${TIERS[b][0]}${plus ? ', чуть сложнее' : ''} — ${TIERS[b][1]}" aria-label="уровень ${tName(t)}"><i></i><i></i><i></i></span>`;
+};
 let pfilt = load('filter', 'all');
 function renderPicker() {
   const used = CATS.filter(([id]) => farms.some(f => f.cat === id));
@@ -169,9 +175,10 @@ function buildPanel() {
     <header class="farmhead">
       <h2>${esc(farm.title)}</h2>
       <p>${esc(farm.short)}</p>
-      <div class="badges">${farm.badges.map(b => `<span>${esc(b)}</span>`).join('')}<span class="tb" title="${esc(TIERS[farm.tier || 1][1])}">${tierHtml(farm.tier || 1)}ур. ${farm.tier || 1} · ${TIERS[farm.tier || 1][0]}</span></div>
+      <div class="badges">${farm.badges.map(b => `<span>${esc(b)}</span>`).join('')}<span class="tb" title="${esc(TIERS[tFloor(farm.tier)][1])}">${tierHtml(farm.tier)}ур. ${tName(farm.tier)} · ${TIERS[tFloor(farm.tier)][0]}</span></div>
       <dl class="stats">${farm.stats.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl>
     </header>
+    ${varBlock()}
     <article class="stepcard">
       <div class="prog" style="--n:${N}" aria-hidden="true"><i></i></div>
       <div class="sbody" aria-live="polite"></div>
@@ -269,6 +276,33 @@ function syncUI() {
   uiRaf = 0;
   if (shownK !== curK) updateStep(curK, shownK ? Math.sign(curK - shownK) : 0);
   updateControls();
+}
+
+/* ---------- уровни фермы: одна ферма — лестница вариантов под прогресс и нужный выход ----------
+   variants в файле фермы: [{ t: 1 | 1.5 | 2 | 3, name, d, id? }]. Вариант без id — тот, что построен в этом файле;
+   с id — отдельный файл фермы (у него of: '<главная>', в списке ферм он не показывается); soon: true — ещё не готов. */
+function varBlock() {
+  const V = farm.variants;
+  if (!V?.length) return '';
+  const cur = V.findIndex(v => !v.soon && (!v.id || v.id === farm.id));
+  return `<section class="block vars">
+      <h4>Уровни этой фермы</h4>
+      <div class="vlist" role="group" aria-label="Уровни фермы">${V.map((v, i) => `<button class="var${v.soon ? ' soon' : ''}" data-v="${i}" aria-pressed="${i === cur}">${tierHtml(v.t)}<b>${tName(v.t)}</b><span>${esc(v.name)}</span></button>`).join('')}</div>
+      <p class="vdesc">${varDesc(V[cur] || V[0])}</p>
+    </section>`;
+}
+const varDesc = v => `${v.soon ? '<em class="soonb">скоро</em> ' : ''}${esc(v.d)}`;
+function initVars() {
+  $('#panel').addEventListener('click', e => {
+    const b = e.target.closest('.vars .var');
+    if (!b) return;
+    const v = farm.variants[+b.dataset.v];
+    if (v.id && !v.soon && v.id !== farm.id) { location.hash = '#' + v.id; return; }
+    b.parentElement.querySelectorAll('.var').forEach(x => x.setAttribute('aria-pressed', x === b));
+    const p = $('#panel .vdesc');
+    p.innerHTML = varDesc(v);
+    if (!calm()) { p.animate(KF.rise, { duration: 220, easing: EASE.out }); b.animate(KF.pop, { duration: 320, easing: EASE.spring }); }
+  });
 }
 
 /* ---------- галочки: шаги и материалы, помним для каждой фермы ---------- */
@@ -468,7 +502,7 @@ function renderCalc() {
 }
 function calcRes(animate) {
   const perH = Math.max(1, +$('#ciN').value || 1);
-  const fs = farms.filter(f => f.calc && f.calc.item === calcItem && (!calcTier || (f.tier || 1) === calcTier))
+  const fs = farms.filter(f => f.calc && f.calc.item === calcItem && (!calcTier || tFloor(f.tier) === calcTier))
     .sort((a, b) => (a.tier || 1) - (b.tier || 1) || unitsFor(a, perH) - unitsFor(b, perH));
   const box = $('#ciRes');
   if (!fs.length) { box.innerHTML = `<p class="cempty">Для «${esc(calcItem)}» на этом уровне ферм пока нет. Выбери другой уровень.</p>`; return; }
@@ -884,7 +918,7 @@ function route() {
 }
 // пиксельный шрифт нужен до первых подписей в 3D
 try { await Promise.race([document.fonts.load('48px Tiny5', 'Жж'), new Promise(r => setTimeout(r, 1500))]); } catch { /* без шрифта тоже работает */ }
-renderVillagers(); renderPotions(); renderTips(); initFarmsView(); initChecks();
+renderVillagers(); renderPotions(); renderTips(); initFarmsView(); initChecks(); initVars();
 addEventListener('hashchange', route);
 route();
 addEventListener('resize', () => still($('.tabs'), () => {
