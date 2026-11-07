@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line', 'carrots']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -280,6 +280,13 @@ D.comparator_top = (g, r, P) => {
 };
 D.lamp_off = (g, r, P) => { noise(P, r, ['#6b4a2a', '#5e3f22', '#77532f']); g.fillStyle = '#3d2a17'; g.fillRect(0, 7, 16, 2); g.fillRect(7, 0, 2, 16); frame(g, '#3d2a17'); };
 D.lamp_on = (g, r, P) => { noise(P, r, ['#ffd27a', '#ffc25a', '#ffe09a', '#f5b04a']); g.fillStyle = '#b8742a'; g.fillRect(0, 7, 16, 2); g.fillRect(7, 0, 2, 16); frame(g, '#a0601f'); };
+// морковь на грядке: пучки ботвы, из земли торчат оранжевые верхушки
+D.carrots = (g, r, P) => {
+  for (const x0 of [2, 7, 12]) {
+    for (let y = 4; y < 13; y++) { P(x0 + (y % 3 === 0 ? 1 : 0), y, pick(r, ['#4f8a22', '#5f9c2b'])); if (y < 9) P(x0 + 1 + (y % 2), y, '#6fae36'); }
+    for (const [dx, dy] of [[0, 13], [1, 13], [0, 14], [1, 14], [1, 15]]) P(x0 + dx, dy, pick(r, ['#e8862a', '#f09a36', '#d5761f']));
+  }
+};
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
 D.blast_front = (g, r, P) => {
@@ -687,6 +694,7 @@ export const BLOCKS = {
   redstone_block: { n: 'Блок редстоуна', cat: 'r', build: () => cube('redstone_block') },
   slab: { n: 'Плита (верхняя половина)', cat: 'b', build: e => bx(1, .5, 1, .5, e.p.top ? .75 : .25, .5, mat('cobble')) },
   farmland: { n: 'Грядка (земля + мотыга)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('farmland'), mat('dirt'), mat('dirt'))) },
+  carrots: { n: 'Морковь (посадить)', cat: 'b', build: () => { const g = new THREE.Group(); for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('carrots')); l.scale.set(.9, .9, 1); l.rotation.y = a; l.position.set(.5, .45, .5); g.add(l); } return g; } },
   melon_stem: { n: 'Семена арбуза (посадить)', cat: 'b', build: e => stemModel('m', e.p.att) },
   pumpkin_stem: { n: 'Семена тыквы (посадить)', cat: 'b', build: e => stemModel('p', e.p.att) },
   melon: { n: 'Арбуз (вырастет сам)', cat: 'b', build: () => cube('melon_top', 'melon_side') },
@@ -827,6 +835,7 @@ export function label(text, color = '#ffd36b') {
 
 export const ENTS = {
   villager: { n: 'Житель', build: () => token('villager') },
+  villager_baby: { n: 'Малыш-житель', build: () => { const g = token('villager'); g.scale.setScalar(.55); return grp(g); } }, // ростом ≈1 блок
   zvillager: { n: 'Зомби-житель', build: () => token('zvillager') },
   zombie: { n: 'Зомби', build: () => token('zombie') },
   golem: { n: 'Железный голем', build: () => tower() },
@@ -834,6 +843,7 @@ export const ENTS = {
   boat: { n: 'Лодка', item: true, build: () => boat() },
   minecart: { n: 'Вагонетка', item: true, build: () => minecart() },
   hopper_minecart: { n: 'Вагонетка с воронкой', item: true, build: () => hopperCart() },
+  carrot_item: { n: 'Морковь', drop: true, build: () => body([[.09, .3, .09, 0, .15, 0, '#e8862a', .4], [.12, .08, .12, 0, .32, -.06, '#5f9c2b', .4]]) },
   stick: { n: 'Палка', drop: true, build: () => body([[.06, .36, .06, 0, .18, 0, '#8a6439', .5]]) },
   log_item: { n: 'Бревно', drop: true, build: () => body([[.26, .26, .26, 0, .13, 0, '#e6e2d6'], [.27, .04, .27, 0, .17, 0, '#2b2b2b']]) },
   melon_slice: { n: 'Ломтик арбуза', drop: true, build: () => body([[.3, .07, .14, 0, .035, -.02, '#d8413a'], [.3, .07, .05, 0, .035, .08, '#4f8f2a'], [.04, .075, .03, -.06, .04, -.03, '#2a1a12'], [.04, .075, .03, .07, .04, -.05, '#2a1a12']]) },
