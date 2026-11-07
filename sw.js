@@ -1,12 +1,13 @@
 // Офлайн-режим: всё складываем в кэш при установке, отдаём из кэша и тихо обновляем из сети.
 // Новая версия сайта — поменяй VERSION, старый кэш удалится.
-const VERSION = 'verstak-22';
+const VERSION = 'verstak-25';
 const FILES = [
   './',
   'app.js',
   'blocks.js',
   'cheats/brew.js',
   'cheats/potions.js',
+  'cheats/redstone-scenes.js',
   'cheats/redstone.js',
   'cheats/tips.js',
   'cheats/villagers.js',

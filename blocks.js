@@ -160,13 +160,13 @@ D.observer_side = (g, r, P) => {
 };
 // провод: полоска 6 пикселей, по краям темнее, внутри яркие крапинки — как пыль, рассыпанная дорожкой
 D.dust_line = (g, r, P) => {
-  for (let y = 0; y < 16; y++) for (let x = 5; x < 11; x++) {
-    const edge = x === 5 || x === 10;
-    if (edge && r() < .35) continue;
-    P(x, y, edge ? pick(r, ['#7d0f0f', '#8e1313']) : pick(r, ['#c81e1e', '#b01818', '#e03030', '#d42626', '#ff4a3a']));
+  // тонкая нитка: 2 пикселя яркой середины и редкие крапинки по краям, как пыль в игре
+  for (let y = 0; y < 16; y++) {
+    P(7, y, pick(r, ['#d42626', '#e03030', '#c81e1e'])); P(8, y, pick(r, ['#b01818', '#d42626', '#ff4a3a']));
+    if (r() < .45) P(6, y, pick(r, ['#8e1313', '#a51616'])); if (r() < .45) P(9, y, pick(r, ['#8e1313', '#a51616']));
   }
 };
-D.dust = (g, r, P) => { for (let y = 5; y < 11; y++) for (let x = 5; x < 11; x++) if (r() < .85) P(x, y, pick(r, ['#c81e1e', '#a51616', '#e03030'])); };
+D.dust = (g, r, P) => { for (let y = 6; y < 10; y++) for (let x = 6; x < 10; x++) if (r() < .8) P(x, y, pick(r, ['#c81e1e', '#a51616', '#e03030'])); };
 D.water = (g, r, P) => {
   noise(P, r, ['#3467d6', '#2f5ec6', '#3c72e2', '#2b56b8', '#3a6ddc']);
   for (let i = 0; i < 6; i++) { const x = (r() * 16) | 0, y = (r() * 16) | 0, l = 3 + ((r() * 3) | 0); for (let k = 0; k < l; k++) P((x + k) % 16, y, k === 0 || k === l - 1 ? '#5585ea' : '#6f9bf2'); }
@@ -481,7 +481,7 @@ function bedModel(f) {
 // Пыль как в игре: дорожки от середины к соседям; одиночная — крестом во все стороны.
 // up — стороны, где провод поднимается на блок: полоска идёт вверх по его стенке.
 function dustModel(conn, up = []) {
-  const g = new THREE.Group(), line = mat('dust_line', { glow: true }), W = 1; // ширину полоски задаёт сама текстура (6 пикселей из 16)
+  const g = new THREE.Group(), line = mat('dust_line', { glow: true }), W = 1; // ширину нитки задаёт сама текстура (2–4 пикселя из 16)
   const dirs = conn.length ? conn : ['n', 's', 'e', 'w'];
   const dot = new THREE.Mesh(PLANE, mat('dust', { glow: true })); dot.rotation.x = -Math.PI / 2; dot.position.set(.5, .021, .5); g.add(dot);
   for (const d of dirs) {
@@ -560,9 +560,10 @@ function repeaterModel(f) {
   return pivot(g, 0, YROT[f || 'n'], 0);
 }
 function buttonModel(side) {
-  const m = mat('stone');
-  if (!side) return grp(bx(.375, .125, .25, .5, .0625, .5, m));
-  return onWall(grp(bx(.375, .25, .125, .5, .5, .0625, m)), side);
+  // светлая кнопка с тёмной каймой — чтобы не терялась на камне
+  const m = mat('#b9b9b9'), rim = mat('#4a4a4a');
+  if (!side) return grp(bx(.4, .1, .28, .5, .05, .5, rim), bx(.36, .13, .24, .5, .065, .5, m));
+  return onWall(grp(bx(.4, .28, .1, .5, .5, .05, rim), bx(.36, .24, .14, .5, .5, .07, m)), side);
 }
 function poweredRailModel(axis, on) {
   const p = new THREE.Mesh(PLANE, mat('prail', on ? { glow: true } : {})); p.rotation.x = -Math.PI / 2; p.position.set(.5, .012, .5);

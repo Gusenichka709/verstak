@@ -1,4 +1,5 @@
 // Интерфейс: вкладки, выбор фермы, шаги, материалы, шпаргалки.
+import * as THREE from 'three';
 import { Viewer, expandPut } from './engine.js';
 import { BLOCKS, ENTS } from './blocks.js';
 import FARM_IDS, { CATS, TIERS } from './farms/index.js';
@@ -10,6 +11,7 @@ import BREW from './cheats/brew.js';
 import { wsIcon, tipIcon } from './icons.js';
 import TIPS from './cheats/tips.js';
 import RS from './cheats/redstone.js';
+import SCN from './cheats/redstone-scenes.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -919,16 +921,69 @@ function renderTips() {
 }
 
 /* ---------- памятка по редстоуну (вкладка «Механизмы») ---------- */
+// Картинки блоков: один раз рисуем каждый блок маленьким снимком в изометрии и запоминаем как PNG
+const thumbs = new Map();
+function blockThumbs(list) {
+  const todo = list.filter(b => !thumbs.has(JSON.stringify(b)));
+  if (!todo.length) return;
+  let R;
+  try { R = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true }); } catch { return; }
+  R.setPixelRatio(2); R.setSize(72, 72); R.outputColorSpace = THREE.SRGBColorSpace;
+  const cam = new THREE.OrthographicCamera(-.92, .92, .92, -.92, .1, 20);
+  cam.position.set(3.2, 2.7, 3.8); cam.lookAt(0, 0, 0);
+  const W = { isType: () => false, dustConn: () => [], dustUp: () => [], at: () => null };
+  for (const b of todo) {
+    const [t, p = {}] = b, sc = new THREE.Scene(), g = new THREE.Group();
+    const item = BLOCKS[t].build({ t, x: 0, y: 0, z: 0, p }, W); g.add(item);
+    // мелочь показываем как в игре — на своём блоке: рычаг и кнопка на стене, факел и пыль сверху
+    const base = { lever: [0, 0, -1], button: [0, 0, -1], rtorch: [0, -1, 0], dust: [0, -1, 0], repeater: [0, -1, 0], comparator: [0, -1, 0] }[t];
+    if (base) { const c = BLOCKS.cobble.build({ t: 'cobble', x: 0, y: 0, z: 0, p: {} }, W); c.position.set(...base); g.add(c); }
+    // кадр по размеру: центр — в середину, поле зрения — по самой длинной стороне
+    // кадр — по самому предмету (опора лишь фоном), но не мельче половины блока
+    const box = new THREE.Box3().setFromObject(item), ctr = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
+    const wall = t === 'lever' || t === 'button';
+    if (base) ctr.add(new THREE.Vector3(...base).multiplyScalar(wall ? .3 : .18));
+    g.position.sub(ctr);
+    const h = wall ? .6 : Math.max(Math.max(size.x, size.y, size.z) * .8, base ? .5 : 0);
+    cam.left = cam.bottom = -h; cam.right = cam.top = h; cam.updateProjectionMatrix();
+    sc.add(g); R.render(sc, cam);
+    thumbs.set(JSON.stringify(b), R.domElement.toDataURL('image/png'));
+  }
+  R.dispose(); R.forceContextLoss();
+}
 function renderRedstone() {
+  blockThumbs(RS.groups.flatMap(g => g.items.filter(b => b.b).map(b => b.b)));
   $('#v-redstone').innerHTML = `
     <header class="sheethead"><a class="linkbtn back" href="#${esc(lastMech || mechs[0].id)}">← к схемам</a><h2>Памятка: блоки редстоуна</h2><p>${esc(RS.intro)}</p></header>
     ${RS.groups.map(g => `<h3 class="rsh">${esc(g.k)}</h3>
     <div class="cards tips rs">${g.items.map(b => `
-      <article class="tipcard">
-        <header><i class="rsdot" style="--c:${b.c}"></i><h3>${esc(b.n)}</h3></header>
+      <article class="tipcard${b.b && SCN[b.b[0]] ? ' tap' : ''}"${b.b && SCN[b.b[0]] ? ` data-k="${b.b[0]}" tabindex="0" role="button" aria-label="${esc(b.n)}: показать, как подключать"` : ''}>
+        <header>${b.b && thumbs.has(JSON.stringify(b.b)) ? `<img class="rsimg" src="${thumbs.get(JSON.stringify(b.b))}" alt="" width="72" height="72">` : `<i class="rsdot" style="--c:${b.c}"></i>`}<h3>${esc(b.n)}</h3></header>
         <p class="rst">${esc(b.t)}</p>
         <ul>${b.list.map(x => `<li>${x}</li>`).join('')}</ul>
+        ${b.b && SCN[b.b[0]] ? '<span class="more">Как подключать — нажми ▸</span>' : ''}
       </article>`).join('')}</div>`).join('')}`;
+  const sec = $('#v-redstone');
+  const open = el => { const c = el.closest('.tipcard.tap'); if (c) openBlock(c.dataset.k, RS.groups.flatMap(g => g.items).find(b => b.b?.[0] === c.dataset.k)); };
+  sec.onclick = e => open(e.target);
+  sec.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e.target); } };
+}
+// окно с живой сценкой: сам блок крупно, что к нему подключено и как он срабатывает
+let mv = null;
+function openBlock(k, item) {
+  const d = $('#rsdlg'), sc = SCN[k];
+  if (!d || !sc) return;
+  d.querySelector('h3').textContent = item.n;
+  d.querySelector('.rst').textContent = item.t;
+  d.querySelector('.rsdh img').src = thumbs.get(JSON.stringify(item.b)) || '';
+  d.querySelector('.rshow').innerHTML = sc.how.map(x => `<li>${x}</li>`).join('');
+  d.showModal();
+  if (!calm()) d.animate(KF.rise, { duration: 260, easing: EASE.out });
+  try {
+    if (!mv) { mv = window.__mv = new Viewer(d.querySelector('.rsview')); d.addEventListener('close', () => mv.setActive(false)); }
+    mv.setActive(true); mv.resize();
+    mv.setFarm(sc.s); mv.set({ ground: 'solid', cut: null, layer: false, highlight: false, demo: true }); mv.goto(1, { animate: false });
+  } catch (err) { d.querySelector('.rsview').textContent = 'Без 3D (WebGL) сценку не показать.'; console.warn(err); }
 }
 
 /* ---------- маршрут ---------- */
