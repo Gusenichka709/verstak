@@ -1,7 +1,7 @@
 // 3D-просмотрщик построек: шаги, анимация появления блоков, грунт, срез по слоям, демо.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BLOCKS, ENTS, DIRS, FACES, mat, maskGeo, label, setAniso, pistonExt } from './blocks.js';
+import { BLOCKS, ENTS, DIRS, FACES, mat, tex, maskGeo, label, setAniso, pistonExt } from './blocks.js';
 
 const K = (x, y, z) => `${x},${y},${z}`;
 const waterH = e => (e.p.src ? .875 : .72);
@@ -261,6 +261,8 @@ export class Viewer {
     return {
       isType: (x, y, z, t) => fa.get(K(x, y, z))?.t === t,
       at: (x, y, z) => fa.get(K(x, y, z)),
+      // где провод забирается на соседний блок — по его стенке рисуется полоска вверх
+      dustUp: e => ['n', 's', 'e', 'w'].filter(d => { const [dx, , dz] = DIRS[d], c = dustStep(fa, e.x, e.y, e.z, dx, dz); return c && c[1] === e.y + 1; }),
       dustConn: e => ['n', 's', 'e', 'w'].filter(d => {
         const [dx, , dz] = DIRS[d]; const nb = fa.get(K(e.x + dx, e.y, e.z + dz));
         if (dustStep(fa, e.x, e.y, e.z, dx, dz)) return true; // соседняя пыль: рядом, ступенькой вверх или вниз
@@ -1067,7 +1069,12 @@ export class Viewer {
     // lit: { 'x,y,z': [[t0, t1], …] } — рычаг включён, красный факел горит, лампа светит
     if (D.lit) {
       if (!this.litCells) { this.litCells = []; for (const m of this.meshes.values()) { const e = m.userData.en, iv = m.userData.setLit && D.lit[`${e.x},${e.y},${e.z}`]; if (iv) this.litCells.push([m, iv]); } }
-      for (const [m, iv] of this.litCells) { const on = iv.some(([a, b]) => T >= a && T < b); if (m.userData.litNow !== on) { m.userData.litNow = on; m.userData.setLit(on); } }
+      for (const [m, iv] of this.litCells) { const on = iv.some(([a, b]) => T >= a && T < b); if (m.userData.litNow !== on) {
+        const was = m.userData.litNow; m.userData.litNow = on; m.userData.setLit(on);
+        // факел или лампа зажглись — пара красных искр
+        const e = m.userData.en;
+        if (on && was === false && (e.t === 'rtorch' || e.t === 'lamp')) this.chips({ x: e.x, y: e.y + (e.t === 'lamp' ? 1 : .5), z: e.z, kind: e.t === 'lamp' ? '#ffd27a' : '#ff5a3a', floor: e.y }, 4, .35, .35);
+      } }
     }
     // разлёт крошек в нужный момент цикла: срезанный бамбук, голем в лаве
     const pT = this.lastDemoT;
@@ -1176,7 +1183,11 @@ export class Viewer {
       const lava = mat('lava', { glow: true }), q = (Math.floor(t * .8) / 16) % 1;
       if (lava.map && lava.map.offset.y !== q) { lava.map.offset.y = q; busy = true; }
     }
-    if (demoOn) { this.demoFrame((t - this.demoT0) % this.farm.demo.period); this.demoRunning = true; busy = true; }
+    if (demoOn) {
+      this.demoFrame((t - this.demoT0) % this.farm.demo.period); this.demoRunning = true; busy = true;
+      // пока идёт демо, вода течёт, лава переливается
+      tex('water').offset.y = (t * .12) % 1; tex('lava').offset.set((t * .03) % 1, (t * .05) % 1);
+    }
     // демо остановилось — всё возвращаем: актёров, головы поршней, счётчик для крошек
     else if (this.demoRunning) { this.demoRunning = false; this.resetDemo(); busy = true; }
     this.controls.update();

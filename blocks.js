@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -44,14 +44,19 @@ const frame = (g, c, w = 16, h = 16) => { g.fillStyle = c; g.fillRect(0, 0, w, 1
 D.missing = g => { g.fillStyle = '#ff00ff'; g.fillRect(0, 0, 16, 16); };
 D.stone = (g, r, P) => noise(P, r, PAL.stone);
 D.dirt = (g, r, P) => noise(P, r, PAL.dirt);
-D.grass_top = (g, r, P) => noise(P, r, PAL.grass);
+D.grass_top = (g, r, P) => {
+  // трава: пятна потемнее и короткие светлые травинки, чтобы поле не было ровной кашей
+  noise(P, r, PAL.grass);
+  for (let i = 0; i < 6; i++) { const x = (r() * 15) | 0, y = (r() * 15) | 0; for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) if (r() < .7) P(x + a, y + b, pick(r, ['#4b822a', '#528d2d'])); }
+  for (let i = 0; i < 14; i++) { const x = (r() * 16) | 0, y = (r() * 15) | 0; P(x, y, '#86c552'); if (r() < .5) P(x, y + 1, '#77b649'); }
+};
 D.grass_side = (g, r, P) => {
   noise(P, r, PAL.dirt);
   for (let x = 0; x < 16; x++) { const d = 2 + (r() < .55) + (r() < .25); for (let y = 0; y < d; y++) P(x, y, pick(r, PAL.grass)); }
 };
 D.mud = (g, r, P) => { noise(P, r, PAL.mud); for (let i = 0; i < 7; i++) P((r() * 16) | 0, (r() * 16) | 0, '#5a524c'); };
 D.cobble = (g, r, P) => {
-  const pts = Array.from({ length: 10 }, () => [r() * 16, r() * 16, pick(r, ['#8a8a8a', '#7b7b7b', '#969696', '#6f6f6f', '#838383'])]);
+  const pts = Array.from({ length: 8 }, () => [r() * 16, r() * 16, pick(r, ['#8a8a8a', '#7b7b7b', '#969696', '#6f6f6f', '#838383'])]);
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
     let d1 = 99, d2 = 99, c = '#808080';
     for (const [px, py, col] of pts) {
@@ -60,7 +65,11 @@ D.cobble = (g, r, P) => {
       const d = Math.hypot(dx, dy);
       if (d < d1) { d2 = d1; d1 = d; c = col; } else if (d < d2) d2 = d;
     }
-    P(x, y, d2 - d1 < 1.15 ? '#585858' : (r() < .2 ? shade(c, .92) : c));
+    if (d2 - d1 < 1.15) { P(x, y, '#535353'); continue; }
+    // камень выпуклый: к верхнему левому краю светлее, к нижнему правому — темнее
+    const near = pts.reduce((a, q) => { let dx = q[0] - x - .5, dy = q[1] - y - .5; dx -= 16 * Math.round(dx / 16); dy -= 16 * Math.round(dy / 16); const d = Math.hypot(dx, dy); return d < a.d ? { d, dx, dy } : a; }, { d: 99 });
+    const lit = Math.max(-.14, Math.min(.14, (near.dx + near.dy) * .045));
+    P(x, y, shade(c, 1 + lit + (r() < .2 ? -.05 : 0)));
   }
 };
 D.planks = (g, r, P) => {
@@ -79,8 +88,9 @@ D.dark_planks = (g, r, P) => {
   }
 };
 D.glass = (g, r, P) => {
-  for (let i = 0; i < 16; i++) { const c = i % 4 === 1 ? '#bcd8de' : '#e3f1f4'; P(i, 0, c); P(i, 15, c); P(0, i, c); P(15, i, c); }
-  [[3, 2], [2, 3], [4, 3], [3, 4], [5, 4], [4, 5], [11, 10], [10, 11], [12, 11], [11, 12]].forEach(([x, y]) => P(x, y, '#d9ecf0'));
+  // тонкая рамка: сверху и слева светлее, снизу и справа голубее; внутри два коротких блика по диагонали
+  for (let i = 0; i < 16; i++) { P(i, 0, '#e6f3f6'); P(0, i, '#e6f3f6'); P(i, 15, '#a9cdd6'); P(15, i, '#a9cdd6'); }
+  [[3, 5], [4, 4], [5, 3], [4, 5], [5, 4], [11, 13], [12, 12], [13, 11]].forEach(([x, y]) => P(x, y, 'rgba(255,255,255,0.85)'));
 };
 D.hopper_side = (g, r, P) => {
   noise(P, r, ['#4b4b50', '#424247', '#55555b', '#3b3b40']);
@@ -148,8 +158,19 @@ D.observer_side = (g, r, P) => {
   for (let i = 0; i < 4; i++) g.fillRect(7 - i, 3 + i, 2 + i * 2, 1);
   g.fillRect(7, 6, 2, 7);
 };
+// провод: полоска 6 пикселей, по краям темнее, внутри яркие крапинки — как пыль, рассыпанная дорожкой
+D.dust_line = (g, r, P) => {
+  for (let y = 0; y < 16; y++) for (let x = 5; x < 11; x++) {
+    const edge = x === 5 || x === 10;
+    if (edge && r() < .35) continue;
+    P(x, y, edge ? pick(r, ['#7d0f0f', '#8e1313']) : pick(r, ['#c81e1e', '#b01818', '#e03030', '#d42626', '#ff4a3a']));
+  }
+};
 D.dust = (g, r, P) => { for (let y = 5; y < 11; y++) for (let x = 5; x < 11; x++) if (r() < .85) P(x, y, pick(r, ['#c81e1e', '#a51616', '#e03030'])); };
-D.water = (g, r, P) => noise(P, r, ['#3467d6', '#2f5ec6', '#3c72e2', '#2b56b8', '#4a7fe8']);
+D.water = (g, r, P) => {
+  noise(P, r, ['#3467d6', '#2f5ec6', '#3c72e2', '#2b56b8', '#3a6ddc']);
+  for (let i = 0; i < 6; i++) { const x = (r() * 16) | 0, y = (r() * 16) | 0, l = 3 + ((r() * 3) | 0); for (let k = 0; k < l; k++) P((x + k) % 16, y, k === 0 || k === l - 1 ? '#5585ea' : '#6f9bf2'); }
+};
 D.lava = (g, r, P) => noise(P, r, ['#d4570a', '#ee7412', '#ffab2c', '#c4420a', '#ff9a1f', '#ffcf4a']);
 D.flow_arrow = g => {
   g.fillStyle = 'rgba(255,255,255,0.92)';
@@ -457,16 +478,24 @@ function bedModel(f) {
   g.position.set(-.5, 0, -.5); inner.add(g); outer.add(inner);
   return outer;
 }
-function dustModel(conn) {
-  const g = new THREE.Group();
-  const dot = new THREE.Mesh(PLANE, mat('dust')); dot.rotation.x = -Math.PI / 2; dot.position.set(.5, .02, .5); g.add(dot);
-  const red = mat('#c41e1e', { glow: true });
-  for (const d of conn) {
+// Пыль как в игре: дорожки от середины к соседям; одиночная — крестом во все стороны.
+// up — стороны, где провод поднимается на блок: полоска идёт вверх по его стенке.
+function dustModel(conn, up = []) {
+  const g = new THREE.Group(), line = mat('dust_line', { glow: true }), W = 1; // ширину полоски задаёт сама текстура (6 пикселей из 16)
+  const dirs = conn.length ? conn : ['n', 's', 'e', 'w'];
+  const dot = new THREE.Mesh(PLANE, mat('dust', { glow: true })); dot.rotation.x = -Math.PI / 2; dot.position.set(.5, .021, .5); g.add(dot);
+  for (const d of dirs) {
     const [dx, , dz] = DIRS[d];
-    const arm = bx(dx ? .5 : .16, .02, dz ? .5 : .16, .5 + dx * .25, .015, .5 + dz * .25, red);
-    g.add(arm);
+    const arm = new THREE.Mesh(PLANE, line);
+    arm.scale.set(W, .5, 1); arm.rotation.set(-Math.PI / 2, 0, dx ? Math.PI / 2 : 0);
+    arm.position.set(.5 + dx * .25, .02, .5 + dz * .25); g.add(arm);
   }
-  if (!conn.length) g.add(bx(.16, .02, .16, .5, .015, .5, red));
+  for (const d of up) {
+    const [dx, , dz] = DIRS[d];
+    const wall = new THREE.Mesh(PLANE, line);
+    wall.scale.set(W, 1, 1); wall.rotation.y = { n: 0, s: Math.PI, e: -Math.PI / 2, w: Math.PI / 2 }[d];
+    wall.position.set(.5 + dx * .49, .5, .5 + dz * .49); g.add(wall);
+  }
   return g;
 }
 function fluid(kind, p) {
@@ -571,11 +600,12 @@ function doorModel(side) {
 }
 function leverModel(side) {
   const base = bx(.375, .5, .1875, .5, .5, .094, mat('cobble'));
-  const h = bx(.1, .5, .1, 0, .22, 0, mat('#7a5a33')); h.rotation.x = .6;
-  const hg = grp(h); hg.position.set(.5, .5, .19);
+  // ручка вращается вокруг шарнира в основании (группа hg), а не вокруг своей середины
+  const h = bx(.1, .5, .1, 0, .25, 0, mat('#7a5a33'));
+  const hg = grp(h, bx(.12, .12, .12, 0, .5, 0, mat('#5a3d22'))); hg.position.set(.5, .5, .19); hg.rotation.x = .6;
   const g = onWall(grp(base, hg), side);
-  // включённый рычаг — ручка вниз (в демо щёлкает)
-  g.userData.setLit = v => { h.rotation.x = v ? -.6 : .6; }; g.userData.litDef = false;
+    // ручка всегда торчит от стены наружу: выключен — вверх, включён — вниз (поворот через «от стены», а не в стену)
+  g.userData.setLit = v => { hg.rotation.x = v ? Math.PI - .6 : .6; }; g.userData.litDef = false;
   return g;
 }
 function railModel(axis) {
@@ -622,7 +652,7 @@ export const BLOCKS = {
   bed: { n: 'Кровать', cat: 'm', cells: e => [[0, 0, 0], footOff(e.p.f)], build: e => bedModel(e.p.f) },
   piston: { n: 'Поршень', cat: 'r', build: e => pistonModel(e.p.f) },
   observer: { n: 'Наблюдатель', cat: 'r', build: e => oriented('observer_front', 'observer_back', 'observer_side', e.p.f) },
-  dust: { n: 'Редстоун', cat: 'r', build: (e, w) => dustModel(w.dustConn(e)) },
+  dust: { n: 'Редстоун', cat: 'r', build: (e, w) => dustModel(w.dustConn(e), w.dustUp?.(e)) },
   lever: { n: 'Рычаг', cat: 'r', build: e => leverModel(e.p.side) },
   iron_door: { n: 'Железная дверь', cat: 'm', cells: () => [[0, 0, 0], [0, 1, 0]], build: e => doorModel(e.p.side) },
   water: { n: 'Вода: клетки-источники (с кружком)', cat: 'f', build: e => fluid('water', e.p), count: e => (e.p.src ? 1 : 0) },
