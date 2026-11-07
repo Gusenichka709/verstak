@@ -617,8 +617,8 @@ function showFarm(f) {
       viewer.setFarm(f);
       const gm = f.ground?.mode || 'glass';
       document.querySelectorAll('[name=ground]').forEach(r => (r.checked = r.value === gm));
-      viewer.set({ cut: f.cut ?? null, ground: gm, layer: false });
-      $('#layer').checked = false; $('.cutbox').classList.remove('layer');
+      viewer.set({ cut: f.cut ?? null, ground: gm, layer: false, solo: false });
+      $('#layer').checked = false; $('#solo').checked = false; $('.cutbox').classList.remove('layer');
       viewer.goto(f.steps.length, { animate: false }); curK = viewer.k;
     } else curK = f.steps.length;
     // новая ферма — сразу, без кадра с пустой карточкой
@@ -790,8 +790,15 @@ function initControls() {
     const on = e.target.checked, lv = viewer.levels();
     viewer.cutReset = false; viewer.cutAuto = false;
     if (on) { const lo = Math.floor(viewer.bounds().min.y); $('#cut').value = lo; setOpt({ layer: true, cut: lo }); viewer.fit('iso'); }
-    else { $('#cut').value = lv.hi; setOpt({ layer: false, cut: null }); }
+    else { $('#cut').value = lv.hi; $('#solo').checked = false; setOpt({ layer: false, cut: null, solo: false }); }
     $('.cutbox').classList.toggle('layer', on);
+    showCut(); chip();
+  };
+  // один слой: только этот ряд (без бледных нижних) и вид сверху — узор, как на плане этажа
+  $('#solo').onchange = e => {
+    const on = e.target.checked;
+    if (on && !viewer.opt.layer) { $('#layer').checked = true; $('#layer').onchange({ target: $('#layer') }); }
+    setOpt({ solo: on }); viewer.fit(on ? 'top' : 'iso');
     showCut(); chip();
   };
   $('#hl').onchange = e => setOpt({ highlight: e.target.checked });

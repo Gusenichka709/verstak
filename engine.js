@@ -159,7 +159,7 @@ export class Viewer {
     // своё время анимаций: идёт, только пока сцену рисуют (вкладка шпаргалок, скрытый браузер — пауза)
     this.at = 0; this.demoT0 = 0;
     this.animEnd = 0; this.dirty = true; this.isOn = true; this.onScreen = true; this.lastDraw = 0;
-    this.opt = { ground: 'glass', highlight: true, onlyNew: false, demo: true, cut: null, layer: false };
+    this.opt = { ground: 'glass', highlight: true, onlyNew: false, demo: true, cut: null, layer: false, solo: false };
     // «по слоям»: всё ниже текущего слоя — бледный призрак одним общим материалом (без лишних шейдеров)
     this.ghostMat = new THREE.MeshBasicMaterial({ color: 0xa9bcc6, transparent: true, opacity: .13, depthWrite: false });
     this.gridMat = new THREE.LineBasicMaterial({ color: 0xffc94d, transparent: true, opacity: .28, depthWrite: false });
@@ -419,10 +419,12 @@ export class Viewer {
     if (d.isEnt) m.rotation.y = d.yaw;
   }
   // должна ли модель быть видна по шагу, срезу и «только новое» (без учёта анимаций)
+  // «один слой»: виден только ряд y = срез — блоки, мобы и полоска грунта с вырезами, как план этажа
+  solo() { return this.opt.solo && this.opt.layer && this.opt.cut !== null; }
   shown(m) {
     const d = m.userData, cut = this.opt.cut;
     if (d.isEnt) return this.entVisible(d.ent);
-    return !!this.active?.has(d.en.id) && !(cut !== null && d.en.y > cut) && !(this.opt.onlyNew && d.en.step !== this.k);
+    return !!this.active?.has(d.en.id) && !(cut !== null && d.en.y > cut) && !(this.solo() && d.en.y < cut) && !(this.opt.onlyNew && d.en.step !== this.k);
   }
   // поза модели: масштаб от середины низа клетки (у мобов — от их опоры), подъём dy
   place(m, sx, sy, sz, dy, cy = 0) {
@@ -705,7 +707,7 @@ export class Viewer {
   }
   entVisible(e) {
     const cut = this.opt.cut;
-    return this.entOn(e, this.k) && !(cut !== null && e.y > cut + .2) && !(this.opt.onlyNew && e.step !== this.k);
+    return this.entOn(e, this.k) && !(cut !== null && e.y > cut + .2) && !(this.solo() && e.y < cut - .5) && !(this.opt.onlyNew && e.step !== this.k);
   }
   buildHighlights() {
     if (this.hl) { this.root.remove(this.hl); this.hl.traverse(o => o.userData.own && o.geometry.dispose()); }
@@ -715,7 +717,7 @@ export class Viewer {
     const step = this.farm.steps[this.k - 1];
     // «копать»: одна общая фигура — контур по внешним рёбрам и лёгкая красная заливка, без каши из рамок
     const dug = new Set();
-    for (const b of step.dig || []) for (const [x, y, z] of boxCells(b)) if (this.opt.cut === null || y <= this.opt.cut) dug.add(K(x, y, z));
+    for (const b of step.dig || []) for (const [x, y, z] of boxCells(b)) if (this.opt.cut === null || (this.solo() ? y === this.opt.cut : y <= this.opt.cut)) dug.add(K(x, y, z));
     if (dug.size) this.hl.add(...this.shell(dug));
     // рамка нового блока прячется, пока блок не приземлился (см. landed)
     const keep = (id, objs, s) => { objs.forEach(o => { o.userData.s = s; o.visible = !this.pending.has(id); this.hl.add(o); }); this.hlBy.set(id, objs); };
@@ -723,7 +725,7 @@ export class Viewer {
       const en = this.entries[id];
       // без рамки: текущая вода и то, что вырастает само (free — крона, стволы), иначе сотни рамок в кашу
       if (en.step !== this.k || en.t === 'water' && !en.p.src || en.p.free) continue;
-      if (this.opt.cut !== null && en.y > this.opt.cut) continue;
+      if (this.opt.cut !== null && (en.y > this.opt.cut || this.solo() && en.y < this.opt.cut)) continue;
       keep(id, en.cells.map(([x, y, z]) => { const l = new THREE.LineSegments(this.edgeGeo, this.hlMat); l.position.set(x + .5, y + .5, z + .5); l.scale.setScalar(1.04); return l; }), 1.04);
     }
     for (const e of this.ents) {
@@ -793,25 +795,28 @@ export class Viewer {
     const G = this.farm.ground;
     this.groundRoot.clear();
     if (!G) return;
-    const k = this.k, cut = this.opt.cut, glass = this.opt.ground === 'glass';
-    const key = `${this.gSteps.filter(s => s <= k).length}|${cut}|${glass}`;
+    const solo = this.solo();
+    // в одном слое полоска грунта всегда сплошная: на ней видно вырезы — что копать на этой высоте
+    const k = this.k, cut = this.opt.cut, glass = this.opt.ground === 'glass' && !solo;
+    const key = `${this.gSteps.filter(s => s <= k).length}|${cut}|${glass}|${solo}`;
     let g = this.gCache.get(key);
     if (!g) {
-      g = this.groundMesh(k, cut, glass);
+      g = this.groundMesh(k, cut, glass, solo);
       // кэш небольшой: срез ползунком даёт много вариантов, старые выкидываем
       if (this.gCache.size >= 24) { const [old, og] = this.gCache.entries().next().value; og.traverse(o => o.userData.ground && o.geometry.dispose()); this.gCache.delete(old); }
       this.gCache.set(key, g);
     }
     this.groundRoot.add(g);
   }
-  groundMesh(k, cut, glass) {
+  groundMesh(k, cut, glass, solo) {
     const G = this.farm.ground, out = new THREE.Group();
     const [x1, y1, z1, x2, y2, z2] = G.box, top = G.top, dirt = G.dirt ?? 3, [, ny, nz] = this.gDim, gone = this.gGone;
     const yTop = Math.min(y2, top, cut === null ? Infinity : cut);
     if (yTop < y1) return out;
-    const solid = (x, y, z) => x >= x1 && x <= x2 && y >= y1 && y <= yTop && z >= z1 && z <= z2 && gone[((x - x1) * ny + (y - y1)) * nz + (z - z1)] > k;
+    const yLo = solo ? Math.max(y1, yTop) : y1; // один слой — полоска грунта толщиной в блок, вырезы в ней = что копать
+    const solid = (x, y, z) => x >= x1 && x <= x2 && y >= yLo && y <= yTop && z >= z1 && z <= z2 && gone[((x - x1) * ny + (y - y1)) * nz + (z - z1)] > k;
     const buf = {}, B = key => (buf[key] ||= { p: [], n: [], uv: [], i: [] });
-    for (let x = x1; x <= x2; x++) for (let y = y1; y <= yTop; y++) for (let z = z1; z <= z2; z++) {
+    for (let x = x1; x <= x2; x++) for (let y = yLo; y <= yTop; y++) for (let z = z1; z <= z2; z++) {
       if (!solid(x, y, z)) continue;
       const kind = y === top ? 'grass' : y >= top - dirt ? 'dirt' : 'stone';
       FACES.forEach(([dx, dy, dz], f) => {
@@ -834,7 +839,7 @@ export class Viewer {
     }
     if (glass) {
       const box = new THREE.LineSegments(this.edgeGeo, this.boxMat);
-      box.scale.set(x2 - x1 + 1, yTop - y1 + 1, z2 - z1 + 1); box.position.set((x1 + x2 + 1) / 2, (y1 + yTop + 1) / 2, (z1 + z2 + 1) / 2);
+      box.scale.set(x2 - x1 + 1, yTop - yLo + 1, z2 - z1 + 1); box.position.set((x1 + x2 + 1) / 2, (yLo + yTop + 1) / 2, (z1 + z2 + 1) / 2);
       out.add(box);
     }
     return out;
@@ -849,7 +854,7 @@ export class Viewer {
     // а если поменяли срез или грунт — доводим шаг до конца, иначе стройка зависнет в пустоте
     if (this.seq) this.clearDig();
     else if (('cut' in opt || 'ground' in opt) && (this.anims.length || this.digs.length)) { this.finishAnims(); this.clearDig(); this.animEnd = 0; }
-    if ('ground' in opt || 'cut' in opt) this.buildGround();
+    if ('ground' in opt || 'cut' in opt || 'solo' in opt || 'layer' in opt) this.buildGround();
     this.refreshVisibility();
     if ('cut' in opt || 'layer' in opt) this.buildGrid();
     // по слоям поднялись на ряд выше — блоки нового ряда ставятся лесенкой, как в игре
