@@ -292,7 +292,7 @@ export class Viewer {
     obj.add(BLOCKS[en.t].build(en, this.world()));
     obj.position.set(en.x, en.y, en.z);
     obj.userData = { en, base: obj.position.clone() };
-    obj.traverse(o => { o.userData.en = en; if (o.userData.cull) obj.userData.cm = o; if (o.userData.pistonHead) obj.userData.head = o; if (o.userData.setLit) { obj.userData.setLit = o.userData.setLit; obj.userData.litDef = o.userData.litDef; } });
+    obj.traverse(o => { o.userData.en = en; if (o.userData.cull) obj.userData.cm = o; if (o.userData.pistonHead) obj.userData.head = o; if (o.userData.setLit) { obj.userData.setLit = o.userData.setLit; obj.userData.setLitT = o.userData.setLitT; obj.userData.litDef = o.userData.litDef; } });
     if (obj.userData.head) this.pistons.push(obj);
     if (en.t === 'dust') {
       // у каждой клетки пыли свои материалы: демо зажигает её по силе сигнала
@@ -983,7 +983,7 @@ export class Viewer {
   }
   resetDemo() {
     this.powerOff();
-    for (const [m] of this.litCells || []) { m.userData.litNow = undefined; m.userData.setLit(m.userData.litDef); }
+    for (const [m] of this.litCells || []) { m.userData.litNow = undefined; m.userData.setLit(m.userData.litDef); m.userData.setLitT?.(m.userData.litDef ? 1 : 0, m.userData.litDef, 9); }
     if (this.actors) this.actors.forEach(x => (x.obj.visible = false));
     for (const p of this.pistons) pistonExt(p.userData.head, 0);
     this.lastDemoT = undefined;
@@ -1069,12 +1069,20 @@ export class Viewer {
     // lit: { 'x,y,z': [[t0, t1], …] } — рычаг включён, красный факел горит, лампа светит
     if (D.lit) {
       if (!this.litCells) { this.litCells = []; for (const m of this.meshes.values()) { const e = m.userData.en, iv = m.userData.setLit && D.lit[`${e.x},${e.y},${e.z}`]; if (iv) this.litCells.push([m, iv]); } }
-      for (const [m, iv] of this.litCells) { const on = iv.some(([a, b]) => T >= a && T < b); if (m.userData.litNow !== on) {
-        const was = m.userData.litNow; m.userData.litNow = on; m.userData.setLit(on);
-        // факел или лампа зажглись — пара красных искр
-        const e = m.userData.en;
-        if (on && was === false && (e.t === 'rtorch' || e.t === 'lamp')) this.chips({ x: e.x, y: e.y + (e.t === 'lamp' ? 1 : .5), z: e.z, kind: e.t === 'lamp' ? '#ffd27a' : '#ff5a3a', floor: e.y }, 4, .35, .35);
-      } }
+      for (const [m, iv] of this.litCells) {
+        // сколько прошло с последнего щелчка: от этого — пружинящий переход (рычаг с перелётом, кнопка вдавливается)
+        let on = false, since = 9;
+        for (const [a, b] of iv) if (T >= a && T < b) { on = true; since = T - a; }
+        if (!on) { let last = -1; for (const [, b] of iv) if (b <= T && b > last) last = b; if (last >= 0) since = T - last; }
+        const sp = since >= 1 ? 1 : 1 - Math.exp(-since * 15) * Math.cos(since * 21);
+        if (m.userData.litNow !== on) {
+          const was = m.userData.litNow; m.userData.litNow = on; m.userData.setLit(on);
+          // факел или лампа зажглись — пара красных искр
+          const e = m.userData.en;
+          if (on && was === false && (e.t === 'rtorch' || e.t === 'lamp')) this.chips({ x: e.x, y: e.y + (e.t === 'lamp' ? 1 : .5), z: e.z, kind: e.t === 'lamp' ? '#ffd27a' : '#ff5a3a', floor: e.y }, 4, .35, .35);
+        }
+        m.userData.setLitT?.(on ? sp : 1 - sp, on, since); // после щелчка: пружина поверх конечного положения
+      }
     }
     // разлёт крошек в нужный момент цикла: срезанный бамбук, голем в лаве
     const pT = this.lastDemoT;

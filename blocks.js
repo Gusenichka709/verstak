@@ -562,8 +562,12 @@ function repeaterModel(f) {
 function buttonModel(side) {
   // светлая кнопка с тёмной каймой — чтобы не терялась на камне
   const m = mat('#b9b9b9'), rim = mat('#4a4a4a');
-  if (!side) return grp(bx(.4, .1, .28, .5, .05, .5, rim), bx(.36, .13, .24, .5, .065, .5, m));
-  return onWall(grp(bx(.4, .28, .1, .5, .5, .05, rim), bx(.36, .24, .14, .5, .5, .07, m)), side);
+  const cap = side ? bx(.36, .24, .14, .5, .5, .07, m) : bx(.36, .13, .24, .5, .065, .5, m);
+  const g = side ? onWall(grp(bx(.4, .28, .1, .5, .5, .05, rim), cap), side) : grp(bx(.4, .1, .28, .5, .05, .5, rim), cap);
+  // нажата — шляпка уходит в стену (в пол), отпустили — выпрыгивает обратно
+  g.userData.setLit = () => {}; g.userData.litDef = false;
+  g.userData.setLitT = k => { if (side) cap.position.z = .07 - .05 * k; else cap.position.y = .065 - .045 * k; };
+  return g;
 }
 function poweredRailModel(axis, on) {
   const p = new THREE.Mesh(PLANE, mat('prail', on ? { glow: true } : {})); p.rotation.x = -Math.PI / 2; p.position.set(.5, .012, .5);
@@ -581,13 +585,17 @@ function torchModel(side, red) {
   const t = grp(bx(.125, .6, .125, 0, .3, 0, stick), fl);
   if (side) { t.rotation.x = .38; t.position.set(.5, .2, .1); } else t.position.set(.5, 0, .5);
   const g = side ? onWall(grp(t), side) : grp(t);
-  if (red) { g.userData.setLit = v => { fl.material = v ? on : off; }; g.userData.litDef = true; }
+  if (red) {
+    g.userData.setLit = v => { fl.material = v ? on : off; }; g.userData.litDef = true;
+    g.userData.setLitT = (k, v, t) => { fl.scale.setScalar(v && t < .35 ? 1 + .9 * (1 - t / .35) : v ? 1 + .06 * Math.sin(t * 9) : .85); }; // вспыхнул и мерцает
+  }
   return g;
 }
 function lampModel(lit) {
   const on = mat('lamp_on', { glow: true }), off = mat('lamp_off');
   const m = bx(1, 1, 1, .5, .5, .5, lit ? on : off);
   const g = grp(m); g.userData.setLit = v => { m.material = v ? on : off; }; g.userData.litDef = !!lit;
+  g.userData.setLitT = (k, v, t) => { m.scale.setScalar(v && t < .4 ? 1 + .08 * Math.sin(t / .4 * Math.PI) * (1 - t / .4) : 1); };
   return g;
 }
 function ladderModel(side) {
@@ -607,6 +615,7 @@ function leverModel(side) {
   const g = onWall(grp(base, hg), side);
     // ручка всегда торчит от стены наружу: выключен — вверх, включён — вниз (поворот через «от стены», а не в стену)
   g.userData.setLit = v => { hg.rotation.x = v ? Math.PI - .6 : .6; }; g.userData.litDef = false;
+  g.userData.setLitT = k => { hg.rotation.x = .6 + (Math.PI - 1.2) * k; }; // k с перелётом: ручка щёлкает и пружинит
   return g;
 }
 function railModel(axis) {
