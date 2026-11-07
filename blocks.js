@@ -88,9 +88,9 @@ D.dark_planks = (g, r, P) => {
   }
 };
 D.glass = (g, r, P) => {
-  // тонкая рамка: сверху и слева светлее, снизу и справа голубее; внутри два коротких блика по диагонали
-  for (let i = 0; i < 16; i++) { P(i, 0, '#e6f3f6'); P(0, i, '#e6f3f6'); P(i, 15, '#a9cdd6'); P(15, i, '#a9cdd6'); }
-  [[3, 5], [4, 4], [5, 3], [4, 5], [5, 4], [11, 13], [12, 12], [13, 11]].forEach(([x, y]) => P(x, y, 'rgba(255,255,255,0.85)'));
+  // ровная светлая рамка со всех сторон и один короткий блик в углу — без мусора посередине
+  for (let i = 0; i < 16; i++) { P(i, 0, '#dcecf1'); P(0, i, '#dcecf1'); P(i, 15, '#c3dde5'); P(15, i, '#c3dde5'); }
+  for (const [x, y] of [[2, 4], [3, 3], [4, 2], [2, 5], [3, 4], [4, 3], [5, 2]]) P(x, y, 'rgba(255,255,255,0.8)');
 };
 D.hopper_side = (g, r, P) => {
   noise(P, r, ['#4b4b50', '#424247', '#55555b', '#3b3b40']);
@@ -362,7 +362,7 @@ export function mat(key, opt = {}) {
   const m = key.startsWith('#') || key.startsWith('rgb') ? new THREE.MeshBasicMaterial({ color: new THREE.Color(key), ...o })
     : new THREE.MeshBasicMaterial({ map: tex(key), ...o });
   if (CUTOUT.has(key)) { m.alphaTest = 0.5; m.side = THREE.DoubleSide; }
-  if (key === 'glass') m.side = THREE.FrontSide; // рамки непрозрачные, середина пустая; стыки стёкол убирает движок
+  // стекло видно с обеих сторон: сквозь блок видны и его задние рамки, как в игре; стыки соседних стёкол движок убирает сам
   if (!glow) m.onBeforeCompile = shadeHook;   // светящееся (лава, огонь, редстоун) — без тени
   MAT.set(id, m);
   return m;
