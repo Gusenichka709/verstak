@@ -685,7 +685,7 @@ export class Viewer {
       this.ghost(m, v && this.opt.layer && this.opt.cut !== null && m.userData.en.y < this.opt.cut);
       if (v && m.userData.en.t === 'lava') this.lavaOn = true;
     }
-    // как в игре: стык двух стёкол (и двух клеток воды) не рисуется
+    // как в игре: стык двух стёкол, двух клеток воды и двух блоков листвы не рисуется
     const vis = new Map();
     for (const [id, m] of this.meshes) if (this.shown(m)) for (const [x, y, z] of this.entries[id].cells) vis.set(K(x, y, z), this.entries[id]);
     for (const [id, m] of this.meshes) {
@@ -721,7 +721,8 @@ export class Viewer {
     const keep = (id, objs, s) => { objs.forEach(o => { o.userData.s = s; o.visible = !this.pending.has(id); this.hl.add(o); }); this.hlBy.set(id, objs); };
     for (const id of this.active) {
       const en = this.entries[id];
-      if (en.step !== this.k || en.t === 'water' && !en.p.src) continue;
+      // без рамки: текущая вода и то, что вырастает само (free — крона, стволы), иначе сотни рамок в кашу
+      if (en.step !== this.k || en.t === 'water' && !en.p.src || en.p.free) continue;
       if (this.opt.cut !== null && en.y > this.opt.cut) continue;
       keep(id, en.cells.map(([x, y, z]) => { const l = new THREE.LineSegments(this.edgeGeo, this.hlMat); l.position.set(x + .5, y + .5, z + .5); l.scale.setScalar(1.04); return l; }), 1.04);
     }
