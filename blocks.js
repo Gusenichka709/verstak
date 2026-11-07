@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'dust_line']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -255,12 +255,7 @@ D.birch_log_top = (g, r, P) => {
   noise(P, r, ['#d9c79a', '#cdbb8c', '#e2d1a6']);
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const d = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5)); if (d > 7) P(x, y, '#e6e2d6'); else if ((d | 0) % 3 === 1) P(x, y, '#b8a676'); }
 };
-D.birch_lv = (g, r, P) => {
-  // листва: плотная, с мелкими дырочками; светлые листики сверху слева, тёмные — тенью
-  // без сквозных дыр (как «быстрая» листва в игре): вместо дырочек — глубокая тень внутри кроны
-  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) P(x, y, r() < .84 ? pick(r, ['#6f9a3a', '#7fae45', '#668f34', '#76a43f']) : pick(r, ['#3b5a20', '#44662a']));
-  for (let i = 0; i < 14; i++) { const x = (r() * 15) | 0, y = (r() * 15) | 0; P(x, y, '#9cc95a'); P(x + 1, y + 1, '#557a2b'); }
-};
+D.birch_lv = (g, r, P) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if (r() < .55) P(x, y, pick(r, ['#6f9a3a', '#7fae45', '#5e8a30', '#8ab84e'])); };
 D.birch_sap = (g, r, P) => {
   g.fillStyle = '#d9d4c4'; g.fillRect(7, 8, 2, 8); g.fillStyle = '#3a3a3a'; g.fillRect(7, 12, 1, 1);
   for (const [x, y, w, h] of [[4, 4, 4, 3], [8, 2, 4, 4], [5, 1, 3, 2], [9, 7, 3, 2], [3, 7, 3, 2]]) { g.fillStyle = pick(r, ['#6f9a3a', '#7fae45', '#8ab84e']); g.fillRect(x, y, w, h); }
@@ -683,7 +678,7 @@ export const BLOCKS = {
   sugar_cane: { n: 'Сахарный тростник (посадить)', cat: 'b', build: () => caneModel() },
   birch_sapling: { n: 'Саженец берёзы', cat: 'b', build: () => { const g = new THREE.Group(); for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('birch_sap')); l.scale.set(.8, .8, 1); l.rotation.y = a; l.position.set(.5, .4, .5); g.add(l); } return g; } },
   birch_log: { n: 'Бревно берёзы', cat: 'b', build: () => cube('birch_log_top', 'birch_log') },
-  birch_leaves: { n: 'Листва берёзы', cat: 'b', build: () => cullable(cube('birch_lv'), 'birch_leaves', [1, 1, 1]) }, // крона — одна масса, без стенок между листьями
+  birch_leaves: { n: 'Листва берёзы', cat: 'b', build: () => cube('birch_lv') },
   dispenser: { n: 'Раздатчик (булыжник + лук + редстоун)', cat: 'r', build: e => frontFaced('disp_front', 'disp_side', 'disp_top', e.p.f) },
   button: { n: 'Кнопка', cat: 'r', build: e => buttonModel(e.p.side) },
   repeater: { n: 'Повторитель', cat: 'r', build: e => repeaterModel(e.p.f) },

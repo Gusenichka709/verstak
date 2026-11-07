@@ -685,7 +685,7 @@ export class Viewer {
       this.ghost(m, v && this.opt.layer && this.opt.cut !== null && m.userData.en.y < this.opt.cut);
       if (v && m.userData.en.t === 'lava') this.lavaOn = true;
     }
-    // как в игре: стык двух стёкол, двух клеток воды и двух блоков листвы не рисуется
+    // как в игре: стык двух стёкол (и двух клеток воды) не рисуется
     const vis = new Map();
     for (const [id, m] of this.meshes) if (this.shown(m)) for (const [x, y, z] of this.entries[id].cells) vis.set(K(x, y, z), this.entries[id]);
     for (const [id, m] of this.meshes) {
