@@ -273,8 +273,11 @@ function updateStep(k, dir) {
 function moveStepPill() {
   const wrap = $('#panel .stepswrap'), on = wrap?.querySelector('button.on'), pill = wrap?.querySelector('.steppill');
   if (!on || !on.offsetHeight) return;
+  // offsetTop кнопки считается от её строки (li), а не от списка — складываем путь до обёртки
+  let y = 0;
+  for (let el = on; el && el !== wrap; el = el.offsetParent) y += el.offsetTop;
   pill.style.height = on.offsetHeight + 'px';
-  pill.style.transform = `translateY(${on.offsetTop}px)`;
+  pill.style.transform = `translateY(${y}px)`;
   pill.classList.add('shown');
   if (wrap.classList.contains('still')) requestAnimationFrame(() => requestAnimationFrame(() => wrap.classList.remove('still')));
 }
