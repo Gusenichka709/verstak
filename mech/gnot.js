@@ -14,6 +14,7 @@ export default {
   ],
   ground: { box: [-2, -1, -2, 6, -1, 2], top: -1, dirt: 0, mode: 'solid' },
   levels: { 0: 'всё на земле' },
+  eye: [2, 0, 3, 2, .5, .5],   // где стоять, если в шаге не сказано иначе
   view: { dir: [.2, .9, 1.3], zoom: .72 },
   steps: [
     {
