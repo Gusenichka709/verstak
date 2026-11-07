@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -225,6 +225,26 @@ D.melon_top = (g, r, P) => {
 };
 D.pumpkin_side = (g, r, P) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) P(x, y, x % 4 === 0 ? '#b2600f' : pick(r, ['#e38a1f', '#d97f17', '#ec9628'])); };
 D.pumpkin_top = (g, r, P) => { noise(P, r, ['#e38a1f', '#d97f17', '#ec9628']); frame(g, '#b2600f'); g.fillStyle = '#6b4a2b'; g.fillRect(7, 7, 2, 2); };
+// берёза: белая кора с чёрными штрихами, торец — кольца; листва дырявая
+D.birch_log = (g, r, P) => {
+  noise(P, r, ['#e6e2d6', '#dcd8cb', '#efebe0', '#d3cfc2']);
+  for (let i = 0; i < 9; i++) { const x = (r() * 13) | 0, y = (r() * 16) | 0, w = 2 + ((r() * 3) | 0); g.fillStyle = r() < .7 ? '#2b2b2b' : '#5a5a52'; g.fillRect(x, y, w, 1); }
+};
+D.birch_log_top = (g, r, P) => {
+  noise(P, r, ['#d9c79a', '#cdbb8c', '#e2d1a6']);
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const d = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5)); if (d > 7) P(x, y, '#e6e2d6'); else if ((d | 0) % 3 === 1) P(x, y, '#b8a676'); }
+};
+D.birch_lv = (g, r, P) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if (r() < .55) P(x, y, pick(r, ['#6f9a3a', '#7fae45', '#5e8a30', '#8ab84e'])); };
+D.birch_sap = (g, r, P) => {
+  g.fillStyle = '#d9d4c4'; g.fillRect(7, 8, 2, 8); g.fillStyle = '#3a3a3a'; g.fillRect(7, 12, 1, 1);
+  for (const [x, y, w, h] of [[4, 4, 4, 3], [8, 2, 4, 4], [5, 1, 3, 2], [9, 7, 3, 2], [3, 7, 3, 2]]) { g.fillStyle = pick(r, ['#6f9a3a', '#7fae45', '#8ab84e']); g.fillRect(x, y, w, h); }
+};
+D.disp_side = (g, r, P) => { noise(P, r, ['#7c7c7c', '#858585', '#707070', '#8e8e8e']); frame(g, '#5a5a5a'); };
+D.disp_top = (g, r, P) => { noise(P, r, ['#8a8a8a', '#939393', '#7f7f7f']); frame(g, '#5a5a5a'); };
+D.disp_front = (g, r, P) => {
+  D.disp_side(g, r, P);
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const d = Math.hypot(x - 7.5, y - 7.5); if (d < 2.6) P(x, y, '#1e1e1e'); else if (d < 3.8) P(x, y, '#4a4a4a'); }
+};
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
 D.blast_front = (g, r, P) => {
@@ -482,6 +502,11 @@ function stemModel(k, att) {
   for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('stem_' + k)); l.scale.set(.8, .9, 1); l.rotation.y = a; l.position.set(.5, .45, .5); g.add(l); }
   return g;
 }
+function buttonModel(side) {
+  const m = mat('stone');
+  if (!side) return grp(bx(.375, .125, .25, .5, .0625, .5, m));
+  return onWall(grp(bx(.375, .25, .125, .5, .5, .0625, m)), side);
+}
 function poweredRailModel(axis, on) {
   const p = new THREE.Mesh(PLANE, mat('prail', on ? { glow: true } : {})); p.rotation.x = -Math.PI / 2; p.position.set(.5, .012, .5);
   if (axis === 'x') p.rotation.z = Math.PI / 2;
@@ -570,6 +595,11 @@ export const BLOCKS = {
   rail: { n: 'Рельсы', cat: 'm', build: e => railModel(e.p.axis) },
   powered_rail: { n: 'Энергорельс', cat: 'm', build: e => poweredRailModel(e.p.axis, e.p.on) },
   sugar_cane: { n: 'Сахарный тростник (посадить)', cat: 'b', build: () => caneModel() },
+  birch_sapling: { n: 'Саженец берёзы', cat: 'b', build: () => { const g = new THREE.Group(); for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('birch_sap')); l.scale.set(.8, .8, 1); l.rotation.y = a; l.position.set(.5, .4, .5); g.add(l); } return g; } },
+  birch_log: { n: 'Бревно берёзы', cat: 'b', build: () => cube('birch_log_top', 'birch_log') },
+  birch_leaves: { n: 'Листва берёзы', cat: 'b', build: () => cube('birch_lv') },
+  dispenser: { n: 'Раздатчик (булыжник + лук + редстоун)', cat: 'r', build: e => frontFaced('disp_front', 'disp_side', 'disp_top', e.p.f) },
+  button: { n: 'Кнопка', cat: 'r', build: e => buttonModel(e.p.side) },
   farmland: { n: 'Грядка (земля + мотыга)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('farmland'), mat('dirt'), mat('dirt'))) },
   melon_stem: { n: 'Семена арбуза (посадить)', cat: 'b', build: e => stemModel('m', e.p.att) },
   pumpkin_stem: { n: 'Семена тыквы (посадить)', cat: 'b', build: e => stemModel('p', e.p.att) },
@@ -685,6 +715,7 @@ export const ENTS = {
   boat: { n: 'Лодка', item: true, build: () => boat() },
   minecart: { n: 'Вагонетка', item: true, build: () => minecart() },
   hopper_minecart: { n: 'Вагонетка с воронкой', item: true, build: () => hopperCart() },
+  log_item: { n: 'Бревно', build: () => body([[.26, .26, .26, 0, .13, 0, '#e6e2d6'], [.27, .04, .27, 0, .17, 0, '#2b2b2b']]) },
   melon_slice: { n: 'Ломтик арбуза', build: () => body([[.3, .07, .14, 0, .035, -.02, '#d8413a'], [.3, .07, .05, 0, .035, .08, '#4f8f2a'], [.04, .075, .03, -.06, .04, -.03, '#2a1a12'], [.04, .075, .03, .07, .04, -.05, '#2a1a12']]) },
   pumpkin_item: { n: 'Тыква', build: () => body([[.3, .28, .3, 0, .14, 0, '#e38a1f'], [.05, .08, .05, 0, .32, 0, '#6b4a2b']]) },
   cane_item: { n: 'Тростник', build: () => body([[.08, .42, .08, -.06, .21, 0, '#9ccf62'], [.08, .38, .08, .06, .19, .03, '#8fc95a']]) },
