@@ -92,6 +92,31 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .rsview { height: min(340px, 48vh); background: radial-gradient(ellipse at 50% 30%, #23303a, #12171b); position: relative; overflow: hidden; }
 .rsview canvas { display: block; }
 .rshow { margin: 0; padding: 12px 16px 16px 34px; display: grid; gap: 6px; }
+/* редактор схем */
+.ewrap { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 12px; align-items: start; }
+.epal, .epanel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; max-height: 72vh; overflow: auto; }
+.epal input[type=search] { width: 100%; margin-bottom: 6px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); }
+.epal h5 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.egrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.eitem { display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--ink); font-size: 11px; text-align: left; cursor: pointer; line-height: 1.15; }
+.eitem img { width: 28px; height: 28px; flex: none; }
+.eitem:hover { background: var(--panel2); }
+.eitem[aria-pressed="true"] { border-color: var(--gold); background: var(--panel2); }
+.eview { position: relative; }
+.eview .viewport { height: 66vh; min-height: 360px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: radial-gradient(ellipse at 50% 30%, #23303a, #12171b); }
+.etitle { position: absolute; left: 10px; top: 10px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: rgba(18,23,27,.8); color: var(--ink); font-weight: 600; }
+.emodes, .esteps { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.emodes button, .esteps button { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); cursor: pointer; font-size: 13px; }
+.emodes button[aria-pressed="true"], .esteps button[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); }
+.ecur { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.ecur img { width: 36px; height: 36px; }
+.epanel h4 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); }
+.erow { display: flex; align-items: center; gap: 6px; margin: 6px 0; font-size: 13px; flex-wrap: wrap; }
+.erow select, .erow input { flex: 1; min-width: 0; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); }
+.ehint { font-size: 12px; color: var(--muted); margin: 6px 0; }
+.ebtns { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.epanel textarea { width: 100%; margin-top: 6px; font: 11px monospace; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+@media (max-width: 1000px) { .ewrap { grid-template-columns: 1fr; } .epal { max-height: 30vh; } .egrid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); } }
 .rsimg { width: 56px; height: 56px; flex: none; image-rendering: auto; filter: drop-shadow(0 3px 4px rgba(0,0,0,.45)); margin: -6px 2px -6px -4px; }
 .tipcard .rst { margin: 0 0 6px; color: var(--ink); font-weight: 600; }
 .sheethead .back { display: inline-block; margin-bottom: 6px; }
@@ -324,12 +349,11 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 .stepcard h3, .prof h3, .tipcard h3, .setup em, .sub, .recipe h3 { font-size: 24px; line-height: 1.15; }
 .tabs a, .pick b, #stepchip b, .stepcard .num, .steps em, .btn, .lvn, .tip b, .need h4, .block h4, .notes h3, .facts h4 { font-size: 16px; line-height: 1.25; }
 .need h4, .block h4 { color: var(--muted); }
-@media (max-width: 560px) {
-  .tabs a { padding: 6px 9px; flex: none; }
-  /* шесть вкладок не влезают в узкий экран: листаются вбок, а не раздвигают страницу */
-  .tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .tabs::-webkit-scrollbar { display: none; }
-}
+/* вкладок много: если не влезают — листаются вбок, а не раздвигают страницу (на любой ширине) */
+.tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs a { flex: none; }
+@media (max-width: 560px) { .tabs a { padding: 6px 9px; } }
 
 /* ---------- анимации: быстро внутрь, пружинисто наружу; только transform и opacity ----------
    Появления на события (шаг, ферма, вкладка) запускает app.js через WAAPI:
@@ -575,6 +599,7 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
     <a href="#potions" data-v="potions">Зелья</a>
     <a href="#tips" data-v="tips">Советы</a>
     <a href="#calc" data-v="calc">Расчёт</a>
+    <a href="#editor" data-v="editor">Редактор</a>
     <span class="tabpill" aria-hidden="true"></span>
   </nav>
 </header>
@@ -627,6 +652,7 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
   <section id="v-tips" class="sheet" hidden aria-label="Советы по фермам"></section>
   <section id="v-calc" class="sheet" hidden aria-label="Расчёт фермы под нужный выход"></section>
   <section id="v-redstone" class="sheet" hidden aria-label="Памятка по блокам редстоуна"></section>
+  <section id="v-editor" class="sheet" hidden aria-label="Редактор своих схем"></section>
   <dialog id="rsdlg" class="rsdlg" aria-label="Как подключать блок">
     <div class="rsdh"><img alt="" width="72" height="72"><div><h3></h3><p class="rst"></p></div><form method="dialog"><button class="x" aria-label="Закрыть">✕</button></form></div>
     <div class="rsview"></div>

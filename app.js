@@ -12,6 +12,7 @@ import { wsIcon, tipIcon } from './icons.js';
 import TIPS from './cheats/tips.js';
 import RS from './cheats/redstone.js';
 import SCN from './cheats/redstone-scenes.js';
+import { showEditor } from './editor.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1042,9 +1043,10 @@ function viewIn(v) {
 let lastFarm = '', lastMech = '';
 function route() {
   const h = location.hash.slice(1);
-  const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы', calc: 'Расчёт', redstone: 'Памятка по редстоуну' };
+  const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы', calc: 'Расчёт', redstone: 'Памятка по редстоуну', editor: 'Редактор схем' };
   if (h === 'calc') renderCalc();
   if (h === 'redstone') renderRedstone();
+  showEditor(h === 'editor');
   const sheet = SHEETS[h] ? h : null;
   // вкладка «Механизмы»: #mech или id схемы; иначе фермы
   const mech = h === 'mech' || mechs.some(m => m.id === h);

@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line', 'carrots']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line', 'carrots', 'trapdoor']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -286,6 +286,21 @@ D.carrots = (g, r, P) => {
     for (let y = 4; y < 13; y++) { P(x0 + (y % 3 === 0 ? 1 : 0), y, pick(r, ['#4f8a22', '#5f9c2b'])); if (y < 9) P(x0 + 1 + (y % 2), y, '#6fae36'); }
     for (const [dx, dy] of [[0, 13], [1, 13], [0, 14], [1, 14], [1, 15]]) P(x0 + dx, dy, pick(r, ['#e8862a', '#f09a36', '#d5761f']));
   }
+};
+// каменный кирпич: ряды кирпичей со смещёнными швами
+D.stone_bricks = (g, r, P) => {
+  noise(P, r, ['#8a8a8a', '#828282', '#939393', '#7c7c7c']);
+  g.fillStyle = '#5a5a5a'; for (const y of [3, 7, 11, 15]) g.fillRect(0, y, 16, 1);
+  for (const [y, xs] of [[0, [7]], [4, [3, 11]], [8, [7]], [12, [3, 11]]]) for (const x of xs) g.fillRect(x, y, 1, 3);
+};
+// тропинка: верх утоптанная светлая земля, бока — земля с полоской сверху
+D.path_top = (g, r, P) => noise(P, r, ['#b39b5c', '#a88f52', '#bca566', '#9f8648']);
+D.path_side = (g, r, P) => { noise(P, r, PAL.dirt); for (let x = 0; x < 16; x++) for (let y = 0; y < 2 + (r() < .4); y++) P(x, y, pick(r, ['#b39b5c', '#a88f52'])); };
+// деревянный люк: доски с рамкой и четырьмя окошками (сквозными)
+D.trapdoor = (g, r, P) => {
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) P(x, y, pick(r, ['#9c7a45', '#a5814d', '#8f6f3e']));
+  frame(g, '#6b4f2c'); g.fillStyle = '#6b4f2c'; g.fillRect(7, 0, 2, 16); g.fillRect(0, 7, 16, 2);
+  for (const [x, y] of [[3, 3], [10, 3], [3, 10], [10, 10]]) g.clearRect(x, y, 3, 3);
 };
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
@@ -560,6 +575,22 @@ function comparatorModel(f) {
   for (const [x, z, h] of [[.28, .74, .26], [.72, .74, .26], [.5, .22, .16]]) g.add(bx(.12, h, .12, x, .125 + h / 2, z, stick), bx(.14, .09, .14, x, .17 + h, z, red));
   return pivot(g, 0, YROT[f || 'n'], 0);
 }
+// каменная стенка (ограда): столбик и перемычки к соседним стенкам и цельным блокам
+function wallModel(e, w) {
+  const m = mat('stone_bricks'), g = grp(bx(.5, 1, .5, .5, .5, .5, m));
+  for (const [d, dx, dz] of [['n', 0, -1], ['s', 0, 1], ['e', 1, 0], ['w', -1, 0]]) {
+    const nb = w.at?.(e.x + dx, e.y, e.z + dz);
+    if (!nb || !(nb.t === 'wall' || ['cobble', 'stone', 'dirt', 'grass', 'planks', 'glass', 'stone_bricks', 'path'].includes(nb.t))) continue;
+    g.add(bx(dx ? .5 : .375, .875, dz ? .5 : .375, .5 + dx * .25, .4375, .5 + dz * .25, m));
+  }
+  return g;
+}
+// люк: закрытый — плита 3/16 внизу клетки (top — вверху); открытый — стоит у стены side
+function trapdoorModel(p) {
+  const m = mat('trapdoor'), t = .1875;
+  if (p.open) return onWall(grp(bx(1, 1, t, .5, .5, t / 2, m)), p.side || 'n');
+  return grp(bx(1, t, 1, .5, p.top ? 1 - t / 2 : t / 2, .5, m));
+}
 function repeaterModel(f) {
   const st = mat('#8f8f8f'), red = mat('#e0402c', { glow: true }), stick = mat('#7a5a33');
   const g = grp(bx(1, .125, 1, .5, .0625, .5, [st, st, mat('repeater_top'), st, st, st]));
@@ -693,6 +724,10 @@ export const BLOCKS = {
   sticky_piston: { n: 'Липкий поршень (поршень + слизь)', cat: 'r', build: e => pistonModel(e.p.f, true) },
   redstone_block: { n: 'Блок редстоуна', cat: 'r', build: () => cube('redstone_block') },
   slab: { n: 'Плита (верхняя половина)', cat: 'b', build: e => bx(1, .5, 1, .5, e.p.top ? .75 : .25, .5, mat('cobble')) },
+  wall: { n: 'Каменная стенка (ограда)', cat: 'b', build: (e, w) => wallModel(e, w) },
+  trapdoor: { n: 'Люк', cat: 'm', build: e => trapdoorModel(e.p) },
+  path: { n: 'Тропинка (дёрн + лопата)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('path_top'), mat('path_side'), mat('dirt'))) },
+  stone_bricks: { n: 'Каменные кирпичи', cat: 'b', build: () => cube('stone_bricks') },
   farmland: { n: 'Грядка (земля + мотыга)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('farmland'), mat('dirt'), mat('dirt'))) },
   carrots: { n: 'Морковь (посадить)', cat: 'b', build: () => { const g = new THREE.Group(); for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('carrots')); l.scale.set(.9, .9, 1); l.rotation.y = a; l.position.set(.5, .45, .5); g.add(l); } return g; } },
   melon_stem: { n: 'Семена арбуза (посадить)', cat: 'b', build: e => stemModel('m', e.p.att) },

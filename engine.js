@@ -1255,9 +1255,12 @@ export class Viewer {
       let o = h.object, ok = true;
       for (let p = o; p; p = p.parent) if (p.visible === false) { ok = false; break; }
       if (!ok) continue;
-      if (o.userData.en) return { en: o.userData.en };
+      // n — грань, по которой кликнули, в мире (для редактора: блок ставится к этой грани)
+      const n = h.face ? h.face.normal.clone().transformDirection(o.matrixWorld) : null;
+      const ax = n && [Math.round(n.x), Math.round(n.y), Math.round(n.z)];
+      if (o.userData.en) return { en: o.userData.en, n: ax, point: h.point };
       if (o.userData.ent) return { ent: o.userData.ent };
-      if (o.userData.ground) { const n = h.face.normal, q = h.point; return { ground: [Math.floor(q.x - n.x * .5), Math.floor(q.y - n.y * .5), Math.floor(q.z - n.z * .5)] }; }
+      if (o.userData.ground) { const q = h.point; return { ground: [Math.floor(q.x - ax[0] * .5), Math.floor(q.y - ax[1] * .5), Math.floor(q.z - ax[2] * .5)], n: ax, point: q }; }
     }
     return null;
   }
