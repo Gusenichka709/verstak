@@ -286,6 +286,24 @@ function setStep(k, animate = true, replay = false) {
   if (viewer) { viewer.goto(k, { animate, replay }); curK = viewer.k; }
   else curK = Math.max(1, Math.min(farm.steps.length, k)); // без WebGL шаги всё равно листаются
   if (!uiRaf) uiRaf = nextFrame(syncUI);
+  stepPauseWatch();
+}
+// пауза постройки любого шага: кнопка живая, пока шаг строится или стоит на паузе; «Продолжить» — с того же блока.
+// Во время «Собрать с нуля» у неё своя пауза на большой кнопке, эта молчит.
+let spT = 0;
+function stepPauseWatch() {
+  clearInterval(spT);
+  const b = $('#stepPause');
+  const tick = () => {
+    if (!viewer || !b) return;
+    const busy = !playing && (viewer.paused || viewer.animLeft() > .05);
+    b.disabled = !busy;
+    const p = busy && viewer.paused, txt = p ? '▶ Продолжить' : '⏸ Пауза';
+    if (b.textContent !== txt) b.textContent = txt;
+    b.setAttribute('aria-pressed', p);
+    if (!busy) clearInterval(spT);
+  };
+  tick(); spT = setInterval(tick, 150);
 }
 function syncUI() {
   if (!uiRaf) return;
@@ -773,6 +791,7 @@ function initControls() {
   $('#bPrev').onclick = () => blkGo(viewer.progress() - 1);
   $('#bNext').onclick = () => blkGo(viewer.progress() + 1);
   $('#replay').onclick = () => { stopPlay(); setStep(viewer.k, true, true); };
+  $('#stepPause').onclick = () => { if (playing) return; viewer.pause(!viewer.paused); stepPauseWatch(); };
   $('#demoBtn').onclick = () => { setOpt({ demo: !viewer.opt.demo }); $('#demoBtn').setAttribute('aria-pressed', viewer.opt.demo); };
   // ползунок шлёт input чаще кадров: применяем не больше раза за кадр
   let cutRaf = 0;
