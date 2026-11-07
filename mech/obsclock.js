@@ -17,7 +17,7 @@ export default {
   ],
   ground: { box: [-3, -1, -3, 7, -1, 3], top: -1, dirt: 0, mode: 'solid' },
   levels: { 0: 'всё на земле' },
-  view: { dir: [.3, 1, 1.2], zoom: 1.2 },
+  view: { dir: [.3, 1, 1.2], zoom: .75 },
   steps: [
     {
       t: 'Поршень и пыль',

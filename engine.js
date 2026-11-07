@@ -64,6 +64,16 @@ const FILL = new Set(['water', 'lava']);
 const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35 };
 const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42 }; // доля времени, когда «приземлился»: пыль и рамка
 const LEAVE = new Set(['out', 'entOut']);
+// Пыль соединяется с пылью рядом, ступенькой вверх (если над собой пусто) и вниз (если над нижней пусто) —
+// поэтому под цельным блоком провод проходит, не касаясь провода сверху («мостик»).
+const SOFT = new Set(['dust', 'air', 'lever', 'button', 'rtorch', 'torch', 'repeater', 'comparator', 'water', 'lava', 'rail', 'powered_rail', 'sign', 'ladder', 'mark', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling']);
+const solidAt = (fa, x, y, z) => { const e = fa.get(K(x, y, z)); return !!e && !SOFT.has(e.t); };
+function dustStep(fa, x, y, z, dx, dz) {
+  if (fa.get(K(x + dx, y, z + dz))?.t === 'dust') return [x + dx, y, z + dz];
+  if (solidAt(fa, x + dx, y, z + dz) && !solidAt(fa, x, y + 1, z) && fa.get(K(x + dx, y + 1, z + dz))?.t === 'dust') return [x + dx, y + 1, z + dz];
+  if (!solidAt(fa, x + dx, y, z + dz) && fa.get(K(x + dx, y - 1, z + dz))?.t === 'dust') return [x + dx, y - 1, z + dz];
+  return null;
+}
 const kindOf = en => (FILL.has(en.t) ? 'fill' : POP.has(en.t) ? 'pop' : 'drop');
 
 // Трещины при копании: 6 стадий, рисуем сами пиксельными ломаными из центра (не игровая текстура)
@@ -253,9 +263,9 @@ export class Viewer {
       at: (x, y, z) => fa.get(K(x, y, z)),
       dustConn: e => ['n', 's', 'e', 'w'].filter(d => {
         const [dx, , dz] = DIRS[d]; const nb = fa.get(K(e.x + dx, e.y, e.z + dz));
-        if (!nb) return [1, -1].some(dy => fa.get(K(e.x + dx, e.y + dy, e.z + dz))?.t === 'dust'); // по ступеньке вверх или вниз
-        if (nb.t === 'dust') return true;
-        if (nb.t === 'comparator') { const [fx, , fz] = DIRS[nb.p.f || 'n']; return (fx !== 0 && dx !== 0) || (fz !== 0 && dz !== 0); }
+        if (dustStep(fa, e.x, e.y, e.z, dx, dz)) return true; // соседняя пыль: рядом, ступенькой вверх или вниз
+        if (!nb) return false;
+        if (nb.t === 'comparator') return true; // к компаратору пыль липнет с любой стороны
         if (nb.t === 'observer') { const [fx, , fz] = DIRS[nb.p.f || 'u']; return fx === dx && fz === dz; }
         if (nb.t === 'lever' || nb.t === 'button' || nb.t === 'rtorch') return true;
         if (nb.t === 'repeater') { const [fx, , fz] = DIRS[nb.p.f || 'n']; return (fx !== 0 && dx !== 0) || (fz !== 0 && dz !== 0); } // только с концов, по оси повторителя
@@ -940,9 +950,9 @@ export class Viewer {
       dist.set(start, 0);
       while (q.length) {
         const [x, y, z] = q.shift(), d = dist.get(K(x, y, z));
-        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) for (const dy of [0, 1, -1]) {
-          const k = K(x + dx, y + dy, z + dz);
-          if (cells.has(k) && !dist.has(k)) { dist.set(k, d + 1); q.push([x + dx, y + dy, z + dz]); }
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const c = dustStep(this.finalAt, x, y, z, dx, dz), k = c && K(...c);
+          if (c && cells.has(k) && !dist.has(k)) { dist.set(k, d + 1); q.push(c); }
         }
       }
       return { ...src, lvl: src.lvl ?? 15, dist };

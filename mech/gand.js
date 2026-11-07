@@ -18,7 +18,7 @@ export default {
   ],
   ground: { box: [-2, -1, -2, 6, -1, 4], top: -1, dirt: 0, mode: 'solid' },
   levels: { 1: 'факелы и пыль сверху', 0: 'блоки, рычаги, выход' },
-  view: { dir: [.45, 1, 1.15], zoom: 1.75 },
+  view: { dir: [.45, 1, 1.15], zoom: .72 },
   steps: [
     {
       t: 'Три блока в ряд',

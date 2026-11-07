@@ -16,7 +16,7 @@ export default {
   ],
   ground: { box: [-3, -1, -2, 20, -1, 8], top: -1, dirt: 0, mode: 'solid' },
   levels: { 0: 'всё на земле' },
-  view: { dir: [-.35, 1, 1.2], zoom: 1 },
+  view: { dir: [-.35, 1, 1.2], zoom: .72 },
   steps: [
     {
       t: 'Рычаг на блоке',
