@@ -59,7 +59,7 @@ const smooth = t => t * t * (3 - 2 * t);
 const wobble = (b, k = 4.5, f = 2.5) => Math.exp(-k * b) * Math.cos(b * Math.PI * f);
 
 // как блок появляется: плоское и мелкое выпрыгивает, жидкость наливается, остальное падает сверху
-const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling', 'button', 'mark', 'iron_door']);
+const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling', 'button', 'repeater', 'mark', 'iron_door']);
 const FILL = new Set(['water', 'lava']);
 const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35 };
 const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42 }; // доля времени, когда «приземлился»: пыль и рамка
@@ -257,6 +257,7 @@ export class Viewer {
         if (nb.t === 'dust') return true;
         if (nb.t === 'observer') { const [fx, , fz] = DIRS[nb.p.f || 'u']; return fx === dx && fz === dz; }
         if (nb.t === 'lever' || nb.t === 'button') return true;
+        if (nb.t === 'repeater') { const [fx, , fz] = DIRS[nb.p.f || 'n']; return (fx !== 0 && dx !== 0) || (fz !== 0 && dz !== 0); } // только с концов, по оси повторителя
         return false;
       }),
     };
@@ -958,6 +959,14 @@ export class Viewer {
       obj.position.set(x + sx, y, z);
       const bs = obj.userData.baseScale;
       if (bs) obj.scale.set(bs.x * s, bs.y * s, 1); else if (a.sy) obj.scale.set(1, s, 1); else obj.scale.setScalar(s);
+      // поворот по ключам [время, угол] (ступенькой) и взмах рукой (игрок рубит, жмёт кнопку)
+      if (a.yaws) { let r = a.yaw || 0; for (const [q, w] of a.yaws) if (T >= q) r = w; obj.rotation.y = r; }
+      const sw = obj.userData.swing;
+      if (sw) {
+        const on = a.swing && a.swing.find(([q, w]) => T >= q && T <= w);
+        const p = on ? ((T - on[0]) / (on[2] || .32)) % 1 : 0;
+        sw.rotation.x = on ? (p < .55 ? 1.1 + p / .55 * 1.5 : 2.6 - (p - .55) / .45 * 1.5) : .25;
+      }
       const fl = a.flash && a.flash.some(([q, w]) => T >= q && T <= w);
       for (const m of mats) {
         m.opacity = o;

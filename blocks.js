@@ -245,6 +245,12 @@ D.disp_front = (g, r, P) => {
   D.disp_side(g, r, P);
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const d = Math.hypot(x - 7.5, y - 7.5); if (d < 2.6) P(x, y, '#1e1e1e'); else if (d < 3.8) P(x, y, '#4a4a4a'); }
 };
+D.tok_shirt = (g, r, P) => noise(P, r, ['#3d6fb3', '#3666a6', '#4579bf', '#2f5c99']);
+D.tok_pants = (g, r, P) => noise(P, r, ['#5a4632', '#4f3d2b', '#64503a']);
+D.repeater_top = (g, r, P) => {
+  noise(P, r, ['#9a9a9a', '#a3a3a3', '#8f8f8f']); frame(g, '#707070');
+  g.fillStyle = '#6b1d16'; g.fillRect(7, 2, 2, 12); g.fillStyle = '#b8261b'; g.fillRect(5, 3, 6, 1); g.fillRect(6, 2, 4, 1); g.fillRect(7, 1, 2, 1);
+};
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
 D.blast_front = (g, r, P) => {
@@ -502,6 +508,13 @@ function stemModel(k, att) {
   for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('stem_' + k)); l.scale.set(.8, .9, 1); l.rotation.y = a; l.position.set(.5, .45, .5); g.add(l); }
   return g;
 }
+// повторитель: плита 2/16 со стрелкой и двумя красными штырьками; f — куда выход
+function repeaterModel(f) {
+  const st = mat('#8f8f8f'), red = mat('#e0402c', { glow: true }), stick = mat('#7a5a33');
+  const g = grp(bx(1, .125, 1, .5, .0625, .5, [st, st, mat('repeater_top'), st, st, st]));
+  for (const z of [.3, .72]) g.add(bx(.12, .26, .12, .5, .25, z, stick), bx(.14, .1, .14, .5, .41, z, red));
+  return pivot(g, 0, YROT[f || 'n'], 0);
+}
 function buttonModel(side) {
   const m = mat('stone');
   if (!side) return grp(bx(.375, .125, .25, .5, .0625, .5, m));
@@ -600,6 +613,7 @@ export const BLOCKS = {
   birch_leaves: { n: 'Листва берёзы', cat: 'b', build: () => cube('birch_lv') },
   dispenser: { n: 'Раздатчик (булыжник + лук + редстоун)', cat: 'r', build: e => frontFaced('disp_front', 'disp_side', 'disp_top', e.p.f) },
   button: { n: 'Кнопка', cat: 'r', build: e => buttonModel(e.p.side) },
+  repeater: { n: 'Повторитель', cat: 'r', build: e => repeaterModel(e.p.f) },
   farmland: { n: 'Грядка (земля + мотыга)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('farmland'), mat('dirt'), mat('dirt'))) },
   melon_stem: { n: 'Семена арбуза (посадить)', cat: 'b', build: e => stemModel('m', e.p.att) },
   pumpkin_stem: { n: 'Семена тыквы (посадить)', cat: 'b', build: e => stemModel('p', e.p.att) },
@@ -672,6 +686,27 @@ function tower() {
   g.add(tb(.6, .09, .02, 0, 2.21, -.545, mat('#ffb347', { glow: true })));
   return g;
 }
+// Ты (игрок): синяя фишка без лица из игры; правая рука с топором машет (userData.swing)
+function player(o = {}) {
+  const shirt = mat('tok_shirt'), pants = mat('tok_pants'), skin = mat('tok_ivory');
+  const g = grp(
+    tb(.2, .62, .22, -.12, .31, 0, pants), tb(.2, .62, .22, .12, .31, 0, pants),
+    tb(.5, .66, .28, 0, .95, 0, shirt), tb(.14, .56, .16, -.32, 1.0, 0, shirt),
+  );
+  const hd = ball(.46, skin); hd.position.y = 1.52;
+  for (const x of [-.09, .09]) hd.add(tb(.06, .06, .02, x, .02, -.237, mat('#2b2b2b')));
+  hd.add(tb(.48, .12, .48, 0, .2, .02, mat('#5a3d22')));
+  g.add(hd);
+  const arm = new THREE.Group(); arm.position.set(.32, 1.24, 0);
+  arm.add(tb(.14, .56, .16, 0, -.26, 0, shirt), tb(.12, .1, .14, 0, -.58, 0, skin));
+  if (o.tool !== 'none') {
+    arm.add(tb(.05, .05, .5, 0, -.58, -.2, mat('#7a5a33')));
+    arm.add(tb(.05, .22, .14, 0, -.52, -.43, mat('#c9c9c9')));
+  }
+  arm.rotation.x = .25;
+  g.add(arm); g.userData.swing = arm;
+  return g;
+}
 function boat() {
   const w = mat('#a5814d'), d = mat('#7a5b34');
   return grp(
@@ -712,6 +747,7 @@ export const ENTS = {
   zvillager: { n: 'Зомби-житель', build: () => token('zvillager') },
   zombie: { n: 'Зомби', build: () => token('zombie') },
   golem: { n: 'Железный голем', build: () => tower() },
+  player: { n: 'Ты', build: o => player(o) },
   boat: { n: 'Лодка', item: true, build: () => boat() },
   minecart: { n: 'Вагонетка', item: true, build: () => minecart() },
   hopper_minecart: { n: 'Вагонетка с воронкой', item: true, build: () => hopperCart() },

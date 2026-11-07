@@ -72,6 +72,8 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .legend i { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--gold); margin-right: 5px; vertical-align: -1px; }
 .legend i.dig { border-color: #ff7b5c; background: rgba(255,90,60,.3); }
 .legend i.mob { border: 0; border-radius: 50%; background: var(--c); }
+.legend i.sym { border: 0; width: auto; height: auto; font-style: normal; color: #8fc7ff; margin-right: 4px; vertical-align: 0; }
+.legend:empty { display: none; }
 .tip { position: absolute; left: 0; top: 0; pointer-events: none; background: rgba(16,20,24,.94); border: 1px solid #3b4951; border-radius: 8px; padding: 7px 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 1px; max-width: 230px; z-index: 3; }
 .tip b { font-size: 13.5px; }
 .tip span { color: var(--muted); }
@@ -301,7 +303,12 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 .stepcard h3, .prof h3, .tipcard h3, .setup em, .sub, .recipe h3 { font-size: 24px; line-height: 1.15; }
 .tabs a, .pick b, #stepchip b, .stepcard .num, .steps em, .btn, .lvn, .tip b, .need h4, .block h4, .notes h3, .facts h4 { font-size: 16px; line-height: 1.25; }
 .need h4, .block h4 { color: var(--muted); }
-@media (max-width: 560px) { .tabs a { padding: 6px 9px; } }
+@media (max-width: 560px) {
+  .tabs a { padding: 6px 9px; flex: none; }
+  /* шесть вкладок не влезают в узкий экран: листаются вбок, а не раздвигают страницу */
+  .tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+}
 
 /* ---------- анимации: быстро внутрь, пружинисто наружу; только transform и opacity ----------
    Появления на события (шаг, ферма, вкладка) запускает app.js через WAAPI:
@@ -542,6 +549,7 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
   <div class="brand"><span class="logo" aria-hidden="true"></span><div><h1>Верстак</h1><p>Minecraft Java 26.3 · пошаговые 3D-схемы и шпаргалки</p></div></div>
   <nav class="tabs" aria-label="Разделы">
     <a id="tabFarms" href="#iron" data-v="farms">Фермы</a>
+    <a id="tabMech" href="#mech" data-v="mech">Механизмы</a>
     <a href="#villagers" data-v="villagers">Жители</a>
     <a href="#potions" data-v="potions">Зелья</a>
     <a href="#tips" data-v="tips">Советы</a>
@@ -554,7 +562,7 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
     <nav class="picker" id="picker" aria-label="Выбор фермы"></nav>
     <div class="stage">
       <div class="viewport" id="viewport">
-        <div class="hud"><span id="stepchip"><b class="n"></b><span class="t"></span><i class="cutbadge cv" hidden></i><i class="cutbadge ok cr" hidden>срез сброшен, чтобы было видно новое</i><i class="cutbadge ok ca" hidden>срез опущен, чтобы было видно новое</i></span><span class="legend"><span><i></i>новое в шаге</span><span><i class="dig"></i>копать</span><span><i class="mob" style="--c:#c9a06a"></i>житель</span><span><i class="mob" style="--c:#5f9e4b"></i>зомби</span><span><i class="mob" style="--c:#c9c3b6"></i>голем</span></span></div>
+        <div class="hud"><span id="stepchip"><b class="n"></b><span class="t"></span><i class="cutbadge cv" hidden></i><i class="cutbadge ok cr" hidden>срез сброшен, чтобы было видно новое</i><i class="cutbadge ok ca" hidden>срез опущен, чтобы было видно новое</i></span><span class="legend"></span></div>
         <div class="tip" id="tip" role="tooltip"></div>
         <div class="loading" id="loading">Загружаю 3D…</div>
         <div class="hint">тяни — вращать · колесо — зум · клик по блоку — его шаг</div>

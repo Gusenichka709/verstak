@@ -2,6 +2,7 @@
 import { Viewer, expandPut } from './engine.js';
 import { BLOCKS, ENTS } from './blocks.js';
 import FARM_IDS, { CATS, TIERS } from './farms/index.js';
+import MECH_IDS, { MCATS } from './mech/index.js';
 import { load, save } from './store.js';
 import VIL from './cheats/villagers.js';
 import POT from './cheats/potions.js';
@@ -12,6 +13,11 @@ import TIPS from './cheats/tips.js';
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const farms = await Promise.all(FARM_IDS.map(id => import(`./farms/${id}.js`).then(m => m.default)));
+// механизмы: те же пошаговые 3D-схемы, но своя вкладка, свой список и свои категории
+const mechs = await Promise.all(MECH_IDS.map(id => import(`./mech/${id}.js`).then(m => ({ ...m.default, kind: 'mech' }))));
+let mode = 'farms'; // какой список показан слева: 'farms' или 'mech'
+const LIST = () => (mode === 'mech' ? mechs : farms), CATL = () => (mode === 'mech' ? MCATS : CATS);
+const noun = f => (f?.kind === 'mech' ? 'схему' : 'ферму');
 let farm = null, viewer = null, playing = null, curK = 1;
 
 /* ---------- анимации интерфейса ----------
@@ -55,6 +61,8 @@ function moveTabPill() {
   pill.style.width = on.offsetWidth + 'px';
   pill.style.setProperty('--x', on.offsetLeft + 'px');
   pill.style.transform = 'translateX(var(--x))';
+  // на телефоне вкладки листаются: выбранная не должна прятаться за краем
+  if (on.offsetLeft < tabs.scrollLeft || on.offsetLeft + on.offsetWidth > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = on.offsetLeft - (tabs.clientWidth - on.offsetWidth) / 2;
   if (!tabs.classList.contains('ready')) requestAnimationFrame(() => tabs.classList.add('ready'));
 }
 
@@ -84,8 +92,8 @@ const chips = (m, cnt) => [...m].map(([n, c]) => `<li data-n="${esc(n)}"><span>$
 
 /* ---------- выбор фермы: рисуем один раз, дальше только переключаем ---------- */
 // порядок списка: по категориям, внутри — по уровню, дальше как в farms/index.js
-const catIdx = id => CATS.findIndex(c => c[0] === id);
-const ordered = () => farms.filter(f => !f.of).map((f, i) => [f, i])
+const catIdx = id => CATL().findIndex(c => c[0] === id);
+const ordered = () => LIST().filter(f => !f.of).map((f, i) => [f, i])
   .sort(([a, i], [b, j]) => (catIdx(a.cat) - catIdx(b.cat)) || ((a.tier || 1) - (b.tier || 1)) || i - j).map(x => x[0]);
 // уровень: 1, 2, 3 или «с плюсом» (1.5 → «1+»: чуть сложнее, например нужен кварц, но рано)
 const tFloor = t => Math.floor(t || 1);
@@ -94,14 +102,16 @@ const tierHtml = t => {
   const b = tFloor(t), plus = (t || 1) % 1;
   return `<span class="tier${plus ? ' plus' : ''}" data-t="${b}" title="Уровень ${tName(t)}: ${TIERS[b][0]}${plus ? ', чуть сложнее' : ''} — ${TIERS[b][1]}" aria-label="уровень ${tName(t)}"><i></i><i></i><i></i></span>`;
 };
-let pfilt = load('filter', 'all');
+let pfilt = 'all';
 function renderPicker() {
-  const used = CATS.filter(([id]) => farms.some(f => f.cat === id));
+  const farms = LIST();
+  pfilt = load(mode === 'mech' ? 'filterMech' : 'filter', 'all');
+  const used = CATL().filter(([id]) => farms.some(f => f.cat === id));
   if (pfilt !== 'all' && !used.some(c => c[0] === pfilt)) pfilt = 'all';
   const btn = (id, n, c) => `<button data-cat="${id}" aria-pressed="${pfilt === id}">${esc(n)} <b>${c}</b></button>`;
   let last = null, list = '';
   for (const f of ordered()) {
-    if (f.cat !== last) { last = f.cat; list += `<h5 data-cat="${f.cat}">${esc(CATS[catIdx(f.cat)]?.[1] || 'Разное')}</h5>`; }
+    if (f.cat !== last) { last = f.cat; list += `<h5 data-cat="${f.cat}">${esc(CATL()[catIdx(f.cat)]?.[1] || 'Разное')}</h5>`; }
     list += `<a class="pick" href="#${f.id}" data-id="${f.id}" data-cat="${f.cat}" aria-current="false">
       <span class="row"><b>${esc(f.title)}</b><span class="rt"><small class="pp"></small>${tierHtml(f.tier || 1)}</span></span><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i><em class="pbar" aria-hidden="true"></em>
     </a>`;
@@ -114,7 +124,7 @@ function renderPicker() {
   $('#picker .pfilt').onclick = e => {
     const b = e.target.closest('button');
     if (!b || b.dataset.cat === pfilt) return;
-    pfilt = b.dataset.cat; save('filter', pfilt);
+    pfilt = b.dataset.cat; save(mode === 'mech' ? 'filterMech' : 'filter', pfilt);
     $('#picker .pfilt').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
     applyFilter(true);
   };
@@ -195,7 +205,7 @@ function buildPanel() {
       </div>
     </section>
     <section class="block mats">
-      <h4>Материалы на всю ферму <small class="mh"></small></h4>
+      <h4>Материалы на всю ${noun(farm)} <small class="mh"></small></h4>
       <div class="mbox"><div><ul class="chips all">${matList()}</ul></div></div>
     </section>
     ${calcBlock()}
@@ -608,9 +618,27 @@ function showFarm(f) {
     // новая ферма — сразу, без кадра с пустой карточкой
     uiRaf = 0;
     buildPanel(); updateStep(curK, 0); updateControls();
+    $('#viewport .legend').innerHTML = legendHtml(f);
     syncPicker(true);
   }
   document.title = `${f.title} — Верстак`;
+}
+
+/* ---------- легенда над 3D: только то, что есть в этой схеме ---------- */
+const MOB = { player: ['#3d6fb3', 'ты'], villager: ['#c9a06a', 'житель'], zvillager: ['#8fb36a', 'зомби-житель'], zombie: ['#5f9e4b', 'зомби'], golem: ['#c9c3b6', 'голем'] };
+function legendHtml(f) {
+  const ents = new Set([...f.steps.flatMap(s => (s.ents || []).map(e => e.e)), ...(f.demo?.actors || []).map(a => a.e)]);
+  const puts = f.steps.flatMap(s => (s.put || []).flatMap(p => expandPut(p)));
+  const has = t => puts.some(e => e.t === t);
+  const out = [];
+  if (puts.length) out.push('<span><i></i>новое в шаге</span>');
+  if (f.steps.some(s => s.dig?.length)) out.push('<span><i class="dig"></i>копать</span>');
+  if (puts.some(e => e.t === 'water' && e.p.src)) out.push('<span><i class="sym">◯</i>вылей ведро</span>');
+  if (puts.some(e => e.t === 'water' && e.p.flow)) out.push('<span><i class="sym">➜</i>течёт вода</span>');
+  if (has('observer')) out.push('<span><i class="mob" style="--c:#c42a1e"></i>выход наблюдателя</span>');
+  if (has('repeater')) out.push('<span><i class="sym">▲</i>повторитель: выход по стрелке</span>');
+  for (const k in MOB) if (ents.has(k)) out.push(`<span><i class="mob" style="--c:${MOB[k][0]}"></i>${MOB[k][1]}</span>`);
+  return out.join('');
 }
 
 /* ---------- «Собрать с нуля» ---------- */
@@ -903,21 +931,26 @@ function viewIn(v) {
   for (const el of sec.children) el.matches('.cards, .notes, .setup, .facts') ? els.push(...el.children) : els.push(el);
   enter(els.slice(0, 9), KF.rise, { dur: 300, step: 40, delay: booted ? 0 : 120 });
 }
+let lastFarm = '', lastMech = '';
 function route() {
   const h = location.hash.slice(1);
   const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы', calc: 'Расчёт' };
   if (h === 'calc') renderCalc();
   const sheet = SHEETS[h] ? h : null;
+  // вкладка «Механизмы»: #mech или id схемы; иначе фермы
+  const mech = h === 'mech' || mechs.some(m => m.id === h);
+  const want = mech ? 'mech' : 'farms';
+  if (!sheet && want !== mode) { mode = want; renderPicker(); }
   $('#v-farms').hidden = !!sheet;
   for (const k in SHEETS) $('#v-' + k).hidden = sheet !== k;
-  document.querySelectorAll('.tabs a').forEach(a => a.setAttribute('aria-current', (a.dataset.v === (sheet || 'farms')) ? 'page' : 'false'));
+  document.querySelectorAll('.tabs a').forEach(a => a.setAttribute('aria-current', (a.dataset.v === (sheet || mode)) ? 'page' : 'false'));
   moveTabPill();
   viewIn(sheet || 'farms');
   if (sheet) { pausePlay(true); viewer?.setActive(false); document.title = SHEETS[sheet] + ' — Верстак'; return; }
   // размер сцены — до showFarm, чтобы камера вписалась по настоящим пропорциям экрана
   viewer?.setActive(true); viewer?.resize();
-  const f = farms.find(x => x.id === h) || farm || farms[0];
-  $('#tabFarms').href = '#' + f.id;
+  const list = LIST(), f = list.find(x => x.id === h) || (list.includes(farm) ? farm : null) || (mode === 'mech' ? mechs.find(m => m.id === lastMech) : farms.find(x => x.id === lastFarm)) || list[0];
+  if (mode === 'mech') { lastMech = f.id; $('#tabMech').href = '#' + f.id; } else { lastFarm = f.id; $('#tabFarms').href = '#' + f.id; }
   showFarm(f);
   // пока вкладка была скрыта, мерить было нечего
   movePickBar(); moveStepPill();

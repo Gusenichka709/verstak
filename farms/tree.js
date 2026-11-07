@@ -22,28 +22,53 @@ XS.forEach((x0, i) => {
 });
 const LEAVES = [...leaves.values()];
 
-const P = [.6, 1.3, 2];                       // нажатия кнопки
-const GROW = 2, CHOP = 3.6, FALL = 7.4, PLANT = 8.1, END = 10;
-const chopAt = (i, j) => CHOP + i * .8 + j * .1;
+// ДЕМО: ты жмёшь кнопку, деревья вырастают, ты обходишь ряд и рубишь каждое снизу вверх, листва осыпается, сажаешь снова.
+const PRESS = [.5, 1.2, 1.9];                  // взмахи рукой у кнопки
+const GROW = 2.05, LOG = .28, END = 18;
+const S = Math.PI, E = -Math.PI / 2, Wd = Math.PI / 2;          // куда смотрит фишка (0 — на север)
+const FRONT = -1.2;                            // где ты стоишь: клетка к северу от стволов
+const C = [4.6, 7.1, 9.6, 12.1];               // начало рубки каждого дерева
+const chopAt = (i, j) => C[i] + j * LOG + .2;  // бревно пропадает чуть после взмаха
+const FALL = 14.3;
+const PLANT = XS.map((x, i) => 16.9 - i * .7); // сажаешь обратно с востока на запад
 
-const actors = [];
-// саженцы до роста и после посадки
-XS.forEach(x => {
-  actors.push({ b: 'birch_sapling', keys: [[0, x, 0, 0], [GROW, x, 0, 0]] });
-  actors.push({ b: 'birch_sapling', keys: [[PLANT + x * .05, x, 0, 0, .01], [PLANT + x * .05 + .3, x, 0, 0, 1], [END, x, 0, 0, 1]] });
-});
-// брёвна вылетают из срубленных стволов к тебе на север
+const me = [[0, -.5, 0, 3.6, 1, 0], [.3, -.5, 0, 3.6], [2.3, -.5, 0, 3.6], [2.8, -1.8, 0, 3.6], [3.8, -1.8, 0, FRONT], [4.4, .5, 0, FRONT]];
+const yaws = [[0, 0], [2.3, Wd], [2.8, 0], [3.8, E], [4.4, S]];
+const swing = PRESS.map(t => [t, t + .3]);
 XS.forEach((x, i) => {
-  for (let j = 0; j < HS[i]; j += 2) {
-    const t = chopAt(i, j);
-    actors.push({ e: 'log_item', keys: [[t, x + .5, j + .3, .5], [t + .45, x + .5, .02, -1.2], [t + 1, x + .5, .02, -1.2], [t + 1.4, x + .5, .4, -2.5, .01]] });
+  const end = C[i] + HS[i] * LOG;
+  me.push([C[i], x + .5, 0, FRONT], [end, x + .5, 0, FRONT]);
+  swing.push([C[i], end, LOG]);
+  if (i < 3) { me.push([end + .15, x + .5, 0, FRONT], [C[i + 1] - .1, x + 2.5, 0, FRONT]); yaws.push([end + .15, E], [C[i + 1] - .1, S]); }
+});
+me.push([FALL, 6.5, 0, FRONT]);
+XS.slice().reverse().forEach((x, k) => {
+  const t = PLANT[3 - k];
+  me.push([t - .35, x + .5, 0, FRONT], [t + .1, x + .5, 0, FRONT]);
+  swing.push([t - .3, t, .3]);
+  yaws.push([t - .9, Wd], [t - .35, S]);
+});
+me.push([17.4, .5, 0, FRONT], [17.9, .5, 0, FRONT, 1, 0]);
+
+const actors = [{ e: 'player', keys: me, yaw: 0, yaws, swing }];
+// саженцы до роста и после посадки
+XS.forEach((x, i) => {
+  actors.push({ b: 'birch_sapling', keys: [[0, x, 0, 0], [GROW, x, 0, 0]] });
+  actors.push({ b: 'birch_sapling', keys: [[PLANT[i], x, 0, 0, .01], [PLANT[i] + .25, x, 0, 0, 1], [END, x, 0, 0, 1]] });
+});
+// срубленное бревно падает к стволу и подбирается тобой
+XS.forEach((x, i) => {
+  for (let j = 0; j < HS[i]; j++) {
+    const t = chopAt(i, j), dx = ((j * 37) % 5 - 2) * .08;
+    actors.push({ e: 'log_item', keys: [[t, x + .5 + dx, j + .3, .5], [t + .35, x + .5 + dx, .02, -.35], [t + .7, x + .5 + dx, .02, -.35], [t + 1.1, x + .5, .7, FRONT, .6, 0]] });
   }
 });
-actors.push({ label: 'жмёшь кнопку', keys: [[.3, -.5, 2.6, 2.5], [GROW + .2, -.5, 2.6, 2.5]] });
-actors.push({ label: 'мука сработала — дерево сразу', color: '#9fe3a0', keys: [[GROW, 3.5, 9.2, 0], [CHOP, 3.5, 9.2, 0]] });
-actors.push({ label: 'руби топором снизу вверх', color: '#ff9a3c', keys: [[CHOP, 3.5, 4.5, -2.5], [FALL, 3.5, 4.5, -2.5]] });
-actors.push({ label: 'листва осыпается — саженцы', color: '#9fe3a0', keys: [[FALL, 3.5, 7, 0], [PLANT + .6, 3.5, 7, 0]] });
-actors.push({ label: 'посади снова', keys: [[PLANT + .3, 3.5, 2, -2], [END, 3.5, 2, -2]] });
+actors.push({ label: 'жмёшь кнопку', keys: [[.3, -.5, 3.4, 2.5], [GROW + .1, -.5, 3.4, 2.5]] });
+actors.push({ label: 'мука сработала — дерево сразу', color: '#9fe3a0', keys: [[GROW, 3.5, 9.2, 0], [3.8, 3.5, 9.2, 0]] });
+actors.push({ label: 'рубишь топором снизу вверх', color: '#ff9a3c', keys: [[C[0], 3.5, 4.6, -2.6], [C[2], 3.5, 4.6, -2.6]] });
+actors.push({ label: 'листва осыпается — саженцы', color: '#9fe3a0', keys: [[FALL, 3.5, 7, 0], [FALL + 1.4, 3.5, 7, 0]] });
+actors.push({ label: 'сажаешь снова', keys: [[PLANT[3] - .3, 3.5, 2.4, -2.4], [17.6, 3.5, 2.4, -2.4]] });
+
 
 export default {
   id: 'tree',
@@ -65,7 +90,7 @@ export default {
   ],
   ground: { box: [-4, -1, -5, 10, -1, 4], top: -1, dirt: 0, mode: 'solid' },
   levels: { 1: 'пыль', 0: 'саженцы и раздатчики' },
-  view: { dir: [-.6, .9, -1.3], zoom: .85 },
+  view: { dir: [-.55, .5, -1.35], zoom: .85 },   // низко с севера: видно тебя под кронами
   extra: [['Костная мука', 64], ['Топор (лучше с Эффективностью)', 1]],
   steps: [
     {
@@ -109,8 +134,9 @@ export default {
   demo: {
     period: END, actors,
     bursts: [
-      ...P.flatMap(t => XS.map(x => [t, x, .4, 0, '#f2eee2', 4, 0])),
+      ...PRESS.flatMap(t => XS.map(x => [t + .15, x, .4, 0, '#f2eee2', 4, 0])),
       ...XS.map((x, i) => [GROW, x, HS[i] - 1, 0, '#7fae45', 10, 0]),
+      ...XS.flatMap((x, i) => Array.from({ length: HS[i] }, (_, j) => [chopAt(i, j), x, j, 0, '#e6e2d6', 3, 0])),
       ...XS.map((x, i) => [FALL, x, HS[i] - 1, 0, '#7fae45', 10, 0]),
     ],
     hide: [
