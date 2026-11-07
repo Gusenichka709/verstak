@@ -1077,9 +1077,9 @@ export class Viewer {
         const sp = since >= 1 ? 1 : 1 - Math.exp(-since * 15) * Math.cos(since * 21);
         if (m.userData.litNow !== on) {
           const was = m.userData.litNow; m.userData.litNow = on; m.userData.setLit(on);
-          // факел или лампа зажглись — пара красных искр
+          // красный факел зажёгся — пара красных частиц, как в игре (лампа просто загорается, без искр)
           const e = m.userData.en;
-          if (on && was === false && (e.t === 'rtorch' || e.t === 'lamp')) this.chips({ x: e.x, y: e.y + (e.t === 'lamp' ? 1 : .5), z: e.z, kind: e.t === 'lamp' ? '#ffd27a' : '#ff5a3a', floor: e.y }, 4, .35, .35);
+          if (on && was === false && e.t === 'rtorch') this.chips({ x: e.x, y: e.y + .5, z: e.z, kind: '#ff5a3a', floor: e.y }, 3, .25, .3);
         }
         m.userData.setLitT?.(on ? sp : 1 - sp, on, since); // после щелчка: пружина поверх конечного положения
       }

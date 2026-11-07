@@ -595,7 +595,6 @@ function lampModel(lit) {
   const on = mat('lamp_on', { glow: true }), off = mat('lamp_off');
   const m = bx(1, 1, 1, .5, .5, .5, lit ? on : off);
   const g = grp(m); g.userData.setLit = v => { m.material = v ? on : off; }; g.userData.litDef = !!lit;
-  g.userData.setLitT = (k, v, t) => { m.scale.setScalar(v && t < .4 ? 1 + .08 * Math.sin(t / .4 * Math.PI) * (1 - t / .4) : 1); };
   return g;
 }
 function ladderModel(side) {
