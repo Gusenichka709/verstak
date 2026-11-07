@@ -606,14 +606,14 @@ function doorModel(side) {
   const d = bx(1, 2, .1875, .5, 1, .094, [mat('#9a9a9a'), mat('#9a9a9a'), mat('#9a9a9a'), mat('#9a9a9a'), m, m]);
   return onWall(grp(d), side);
 }
-function leverModel(side) {
+function leverModel(side, on) {
   const base = bx(.375, .5, .1875, .5, .5, .094, mat('cobble'));
   // ручка вращается вокруг шарнира в основании (группа hg), а не вокруг своей середины
   const h = bx(.1, .5, .1, 0, .25, 0, mat('#7a5a33'));
-  const hg = grp(h, bx(.12, .12, .12, 0, .5, 0, mat('#5a3d22'))); hg.position.set(.5, .5, .19); hg.rotation.x = .6;
+  const hg = grp(h, bx(.12, .12, .12, 0, .5, 0, mat('#5a3d22'))); hg.position.set(.5, .5, .19); hg.rotation.x = on ? Math.PI - .6 : .6;
   const g = onWall(grp(base, hg), side);
     // ручка всегда торчит от стены наружу: выключен — вверх, включён — вниз (поворот через «от стены», а не в стену)
-  g.userData.setLit = v => { hg.rotation.x = v ? Math.PI - .6 : .6; }; g.userData.litDef = false;
+  g.userData.setLit = v => { hg.rotation.x = v ? Math.PI - .6 : .6; }; g.userData.litDef = !!on;
   g.userData.setLitT = k => { hg.rotation.x = .6 + (Math.PI - 1.2) * k; }; // k с перелётом: ручка щёлкает и пружинит
   return g;
 }
@@ -662,7 +662,7 @@ export const BLOCKS = {
   piston: { n: 'Поршень', cat: 'r', build: e => pistonModel(e.p.f) },
   observer: { n: 'Наблюдатель', cat: 'r', build: e => oriented('observer_front', 'observer_back', 'observer_side', e.p.f) },
   dust: { n: 'Редстоун', cat: 'r', build: (e, w) => dustModel(w.dustConn(e), w.dustUp?.(e)) },
-  lever: { n: 'Рычаг', cat: 'r', build: e => leverModel(e.p.side) },
+  lever: { n: 'Рычаг', cat: 'r', build: e => leverModel(e.p.side, e.p.on) }, // on: true — стоит включённым
   iron_door: { n: 'Железная дверь', cat: 'm', cells: () => [[0, 0, 0], [0, 1, 0]], build: e => doorModel(e.p.side) },
   water: { n: 'Вода: клетки-источники (с кружком)', cat: 'f', build: e => fluid('water', e.p), count: e => (e.p.src ? 1 : 0) },
   lava: { n: 'Ведро лавы', cat: 'f', build: e => fluid('lava', e.p) },
