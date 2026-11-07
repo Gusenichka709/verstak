@@ -488,6 +488,24 @@ export class Viewer {
     if (dir.y < .25) { dir.y = .5; dir.normalize(); }
     this.flyTo(c.clone().add(dir.multiplyScalar(dist)), c, .85);
   }
+  // «Где ты стоишь» в шаге: eye = [x, y, z, куда смотришь x, y, z] (y — под ногами). Синяя фишка «ты» на этом месте.
+  markEye(e) {
+    if (e !== this.eyeE) this.inEye = false; // другой шаг — снова показываем, где стоять
+    this.eyeE = e;
+    if (!this.eyeMark) { this.eyeMark = ENTS.player.build({ tool: 'none' }); this.root.add(this.eyeMark); }
+    const m = this.eyeMark, cut = this.opt.cut;
+    // прячем только в «по слоям» (там важен ряд), автосрез сплошного грунта фишку не скрывает
+    m.visible = !!e && !this.inEye && !(this.opt.layer && cut !== null && (e[1] > cut + .2 || this.solo() && e[1] < cut - .5));
+    if (e) { m.position.set(e[0], e[1], e[2]); m.rotation.y = Math.atan2(-(e[3] - e[0]), -(e[5] - e[2])); }
+    this.dirty = true;
+  }
+  // «Глазами»: камера на высоте глаз (1,62 над ногами) там, где стоишь, и смотрит туда, где работаешь
+  eyeView(e) {
+    if (!e) return;
+    this.inEye = true; if (this.eyeMark) this.eyeMark.visible = false;
+    this.camera.near = .05; this.camera.updateProjectionMatrix();
+    this.flyTo(new THREE.Vector3(e[0], e[1] + 1.62, e[2]), new THREE.Vector3(e[3], e[4], e[5]), .9);
+  }
   flyTo(pos, target, dur) {
     if (!dur || RM.matches) { this.camera.position.copy(pos); this.controls.target.copy(target); this.tween = null; }
     else this.tween = { from: this.camera.position.clone(), to: pos, tf: this.controls.target.clone(), tt: target, t0: this.at, dur };
@@ -912,6 +930,7 @@ export class Viewer {
     const f = this.farm.view || {};
     const dist = r / Math.sin(this.halfFov()) * (f.zoom || .82);
     let dir = new THREE.Vector3(...(f.dir || [.95, .78, 1.15])).normalize();
+    this.inEye = false; if (this.eyeMark && this.eyeE) this.markEye(this.eyeE);
     if (mode === 'keep' && this.k) dir = this.camera.position.clone().sub(this.controls.target).normalize();
     if (mode === 'top') dir = new THREE.Vector3(0.0001, 1, 0.12).normalize();
     if (mode === 'front') dir = new THREE.Vector3(0, .25, 1).normalize();

@@ -566,6 +566,8 @@ function updateControls() {
   chip();
   $('#prev').disabled = k <= 1; $('#next').disabled = k >= N;
   $('#demoBtn').hidden = !farm.demo || k !== N;
+  // где ты стоишь в этом шаге: синяя фишка и кнопка «Глазами»
+  const eye = farm.steps[k - 1].eye; $('#viewEye').disabled = !eye; viewer.markEye(eye);
   syncBlk();
   const lv = viewer.levels(), cut = $('#cut');
   cut.min = lv.lo; cut.max = lv.hi;
@@ -644,6 +646,7 @@ function legendHtml(f) {
   if (has('observer')) out.push('<span><i class="mob" style="--c:#c42a1e"></i>выход наблюдателя</span>');
   if (has('rtorch')) out.push('<span><i class="mob" style="--c:#ff3b26"></i>красный факел: гаснет от сигнала</span>');
   if (has('repeater')) out.push('<span><i class="sym">▲</i>повторитель: выход по стрелке</span>');
+  if (f.steps.some(s => s.eye)) ents.add('player');
   for (const k in MOB) if (ents.has(k)) out.push(`<span><i class="mob" style="--c:${MOB[k][0]}"></i>${MOB[k][1]}</span>`);
   return out.join('');
 }
@@ -806,6 +809,12 @@ function initControls() {
   document.querySelectorAll('[name=ground]').forEach(r => (r.onchange = () => { setOpt({ ground: r.value }); chip(); }));
   $('#viewIso').onclick = () => viewer.fit('iso');
   $('#viewTop').onclick = () => viewer.fit('top');
+  // глазами — как в игре: грунт сплошной (сквозь землю ты не видишь), срез снят
+  $('#viewEye').onclick = () => {
+    if (viewer.opt.ground !== 'solid') { document.querySelector('[name=ground][value=solid]').checked = true; setOpt({ ground: 'solid' }); }
+    if (viewer.opt.cut !== null && !viewer.opt.layer) { setOpt({ cut: null }); updateControls(); }
+    viewer.eyeView(farm.steps[viewer.k - 1].eye);
+  };
 }
 
 /* ---------- шпаргалка: жители ---------- */
