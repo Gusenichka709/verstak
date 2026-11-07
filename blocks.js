@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -204,6 +204,27 @@ D.prail = (g, r, P) => {
   g.fillStyle = '#b8902a'; g.fillRect(4, 0, 1, 16); g.fillRect(11, 0, 1, 16);
   g.fillStyle = '#ff3b2a'; g.fillRect(7, 0, 2, 16);
 };
+// грядка: бороздки поперёк, влажная земля
+D.farmland = (g, r, P) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) P(x, y, y % 4 === 0 ? '#3e2716' : y % 4 === 1 ? pick(r, ['#6e4a2e', '#76502f']) : pick(r, ['#553620', '#5e3c22', '#4f321d'])); };
+// стебли арбуза и тыквы: тонкий стебелёк с листиками; _att — верх загнут вправо, к плоду
+const STEM = { m: ['#8db83a', '#a7cf4a', '#6f9a2a'], p: ['#b3b03a', '#d0b443', '#8f8a2a'] };
+const stem = (P, c, att) => {
+  for (let y = att ? 5 : 2; y < 16; y++) { P(7, y, c[0]); P(8, y, c[1]); }
+  if (att) for (let x = 9; x < 16; x++) { P(x, 4, c[1]); P(x, 5, c[0]); }
+  else { P(7, 1, c[1]); P(8, 1, c[1]); }
+  for (const [x, y] of [[5, 9], [4, 8], [6, 10], [10, 12], [11, 11], [9, 13]]) P(x, y, c[2]);
+};
+D.stem_m = (g, r, P) => stem(P, STEM.m, false);
+D.stem_p = (g, r, P) => stem(P, STEM.p, false);
+D.stem_m_att = (g, r, P) => stem(P, STEM.m, true);
+D.stem_p_att = (g, r, P) => stem(P, STEM.p, true);
+D.melon_side = (g, r, P) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) P(x, y, x % 4 < 2 ? pick(r, ['#3f7d1f', '#457f22']) : pick(r, ['#7cb83a', '#86c043', '#73ad34'])); };
+D.melon_top = (g, r, P) => {
+  noise(P, r, ['#7cb83a', '#86c043', '#73ad34']);
+  for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const d = Math.hypot(x - 7.5, y - 7.5); if (d > 2.4 && d < 3.6) P(x, y, '#457f22'); }
+};
+D.pumpkin_side = (g, r, P) => { for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) P(x, y, x % 4 === 0 ? '#b2600f' : pick(r, ['#e38a1f', '#d97f17', '#ec9628'])); };
+D.pumpkin_top = (g, r, P) => { noise(P, r, ['#e38a1f', '#d97f17', '#ec9628']); frame(g, '#b2600f'); g.fillStyle = '#6b4a2b'; g.fillRect(7, 7, 2, 2); };
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
 D.blast_front = (g, r, P) => {
@@ -454,6 +475,13 @@ function caneModel() {
   for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('cane')); l.rotation.y = a; l.position.set(.5, .5, .5); g.add(l); }
   return g;
 }
+// стебель: крестик из двух плоскостей; att — один лист, верх загнут к плоду (n/s/e/w)
+function stemModel(k, att) {
+  const g = new THREE.Group();
+  if (att) { const l = new THREE.Mesh(PLANE, mat('stem_' + k + '_att')); l.scale.set(1, .9, 1); l.rotation.y = { e: 0, n: Math.PI / 2, w: Math.PI, s: -Math.PI / 2 }[att]; l.position.set(.5, .45, .5); g.add(l); return g; }
+  for (const a of [Math.PI / 4, -Math.PI / 4]) { const l = new THREE.Mesh(PLANE, mat('stem_' + k)); l.scale.set(.8, .9, 1); l.rotation.y = a; l.position.set(.5, .45, .5); g.add(l); }
+  return g;
+}
 function poweredRailModel(axis, on) {
   const p = new THREE.Mesh(PLANE, mat('prail', on ? { glow: true } : {})); p.rotation.x = -Math.PI / 2; p.position.set(.5, .012, .5);
   if (axis === 'x') p.rotation.z = Math.PI / 2;
@@ -542,6 +570,11 @@ export const BLOCKS = {
   rail: { n: 'Рельсы', cat: 'm', build: e => railModel(e.p.axis) },
   powered_rail: { n: 'Энергорельс', cat: 'm', build: e => poweredRailModel(e.p.axis, e.p.on) },
   sugar_cane: { n: 'Сахарный тростник (посадить)', cat: 'b', build: () => caneModel() },
+  farmland: { n: 'Грядка (земля + мотыга)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('farmland'), mat('dirt'), mat('dirt'))) },
+  melon_stem: { n: 'Семена арбуза (посадить)', cat: 'b', build: e => stemModel('m', e.p.att) },
+  pumpkin_stem: { n: 'Семена тыквы (посадить)', cat: 'b', build: e => stemModel('p', e.p.att) },
+  melon: { n: 'Арбуз (вырастет сам)', cat: 'b', build: () => cube('melon_top', 'melon_side') },
+  pumpkin: { n: 'Тыква (вырастет сама)', cat: 'b', build: () => cube('pumpkin_top', 'pumpkin_side') },
   iron_bars: { n: 'Железная решётка', cat: 'b', build: () => cube('iron_bars') },
   mark: { n: 'Метка', cat: 'x', build: e => markerModel(e.p.c || '#ff4d3d') },
   air: { n: 'Пусто', cat: 'x' },
@@ -652,6 +685,8 @@ export const ENTS = {
   boat: { n: 'Лодка', item: true, build: () => boat() },
   minecart: { n: 'Вагонетка', item: true, build: () => minecart() },
   hopper_minecart: { n: 'Вагонетка с воронкой', item: true, build: () => hopperCart() },
+  melon_slice: { n: 'Ломтик арбуза', build: () => body([[.3, .07, .14, 0, .035, -.02, '#d8413a'], [.3, .07, .05, 0, .035, .08, '#4f8f2a'], [.04, .075, .03, -.06, .04, -.03, '#2a1a12'], [.04, .075, .03, .07, .04, -.05, '#2a1a12']]) },
+  pumpkin_item: { n: 'Тыква', build: () => body([[.3, .28, .3, 0, .14, 0, '#e38a1f'], [.05, .08, .05, 0, .32, 0, '#6b4a2b']]) },
   cane_item: { n: 'Тростник', build: () => body([[.08, .42, .08, -.06, .21, 0, '#9ccf62'], [.08, .38, .08, .06, .19, .03, '#8fc95a']]) },
   iron: { n: 'Железный слиток', build: ITEM('#dedede') },
   bamboo_item: { n: 'Бамбук', build: () => body([[.1, .45, .1, 0, .22, 0, '#6a9c30']]) },

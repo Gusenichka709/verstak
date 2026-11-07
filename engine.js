@@ -59,7 +59,7 @@ const smooth = t => t * t * (3 - 2 * t);
 const wobble = (b, k = 4.5, f = 2.5) => Math.exp(-k * b) * Math.cos(b * Math.PI * f);
 
 // как блок появляется: плоское и мелкое выпрыгивает, жидкость наливается, остальное падает сверху
-const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'mark', 'iron_door']);
+const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'mark', 'iron_door']);
 const FILL = new Set(['water', 'lava']);
 const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35 };
 const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42 }; // доля времени, когда «приземлился»: пыль и рамка
