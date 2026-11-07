@@ -1,6 +1,6 @@
 // Вкладка «Механизмы»: полезные редстоун-схемы. Формат файла — как у фермы (farms/*.js), только без calc.
 // Новая схема: создай mech/<id>.js (id не должен совпадать с id фермы) и добавь id сюда, а в sw.js — в FILES.
-export default ['power', 'obsclock'];
+export default ['power', 'obsclock', 'hopperclock'];
 
 export const MCATS = [
   ['basic', 'Основы'],

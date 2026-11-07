@@ -251,6 +251,12 @@ D.repeater_top = (g, r, P) => {
   noise(P, r, ['#9a9a9a', '#a3a3a3', '#8f8f8f']); frame(g, '#707070');
   g.fillStyle = '#6b1d16'; g.fillRect(7, 2, 2, 12); g.fillStyle = '#b8261b'; g.fillRect(5, 3, 6, 1); g.fillRect(6, 2, 4, 1); g.fillRect(7, 1, 2, 1);
 };
+D.piston_sticky = (g, r, P) => { D.planks(g, r, P); frame(g, '#6f6f6f'); noise(P, r, ['#7bc04a', '#6cb03f', '#8ad057', '#5f9e36'], 2, 2, 12, 12); };
+D.redstone_block = (g, r, P) => { noise(P, r, ['#b3200f', '#c42a16', '#a01a0c', '#d6341e']); frame(g, '#7e140a'); for (let i = 0; i < 6; i++) P(2 + ((r() * 12) | 0), 2 + ((r() * 12) | 0), '#ff6a4a'); };
+D.comparator_top = (g, r, P) => {
+  noise(P, r, ['#9a9a9a', '#a3a3a3', '#8f8f8f']); frame(g, '#707070');
+  g.fillStyle = '#6b1d16'; g.fillRect(4, 3, 8, 1); g.fillRect(7, 3, 2, 10); g.fillStyle = '#b8261b'; g.fillRect(6, 1, 4, 2);
+};
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
 D.blast_front = (g, r, P) => {
@@ -405,7 +411,7 @@ function onWall(obj, side) { return pivot(obj, 0, YROT[side || 'n'], 0); }
 /* ---------- форма блоков ---------- */
 // Поршень из двух частей: корпус 12/16 и голова 4/16; между ними шток. Выдвигает движок через pistonExt().
 let PIST;
-function pistonModel(f) {
+function pistonModel(f, sticky) {
   if (!PIST) {
     // боковая текстура общая: деревянная полоса сверху — голове, камень — корпусу
     const crop = (h, v0, v1) => {
@@ -415,7 +421,7 @@ function pistonModel(f) {
     };
     PIST = { base: crop(.75, 0, .75), plate: crop(.25, .75, 1), arm: new THREE.BoxGeometry(.25, 1, .25) };
   }
-  const side = mat('piston_side'), face = mat('piston_front');
+  const side = mat('piston_side'), face = mat(sticky ? 'piston_sticky' : 'piston_front');
   const base = boxMesh(PIST.base, six(mat('piston_inner'), side, mat('piston_back'))); base.position.set(.5, .375, .5);
   const plate = boxMesh(PIST.plate, six(face, side, face)); plate.position.set(.5, .875, .5);
   const arm = new THREE.Mesh(PIST.arm, mat('piston_arm')); arm.position.set(.5, .75, .5); arm.visible = false;
@@ -509,6 +515,13 @@ function stemModel(k, att) {
   return g;
 }
 // повторитель: плита 2/16 со стрелкой и двумя красными штырьками; f — куда выход
+// компаратор: плита с двумя штырьками сзади и одним спереди; f — куда выход, сзади он читает сундук или воронку
+function comparatorModel(f) {
+  const st = mat('#8f8f8f'), red = mat('#e0402c', { glow: true }), stick = mat('#7a5a33');
+  const g = grp(bx(1, .125, 1, .5, .0625, .5, [st, st, mat('comparator_top'), st, st, st]));
+  for (const [x, z, h] of [[.28, .74, .26], [.72, .74, .26], [.5, .22, .16]]) g.add(bx(.12, h, .12, x, .125 + h / 2, z, stick), bx(.14, .09, .14, x, .17 + h, z, red));
+  return pivot(g, 0, YROT[f || 'n'], 0);
+}
 function repeaterModel(f) {
   const st = mat('#8f8f8f'), red = mat('#e0402c', { glow: true }), stick = mat('#7a5a33');
   const g = grp(bx(1, .125, 1, .5, .0625, .5, [st, st, mat('repeater_top'), st, st, st]));
@@ -614,6 +627,10 @@ export const BLOCKS = {
   dispenser: { n: 'Раздатчик (булыжник + лук + редстоун)', cat: 'r', build: e => frontFaced('disp_front', 'disp_side', 'disp_top', e.p.f) },
   button: { n: 'Кнопка', cat: 'r', build: e => buttonModel(e.p.side) },
   repeater: { n: 'Повторитель', cat: 'r', build: e => repeaterModel(e.p.f) },
+  comparator: { n: 'Компаратор', cat: 'r', build: e => comparatorModel(e.p.f) },
+  sticky_piston: { n: 'Липкий поршень (поршень + слизь)', cat: 'r', build: e => pistonModel(e.p.f, true) },
+  redstone_block: { n: 'Блок редстоуна', cat: 'r', build: () => cube('redstone_block') },
+  slab: { n: 'Плита (верхняя половина)', cat: 'b', build: e => bx(1, .5, 1, .5, e.p.top ? .75 : .25, .5, mat('cobble')) },
   farmland: { n: 'Грядка (земля + мотыга)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('farmland'), mat('dirt'), mat('dirt'))) },
   melon_stem: { n: 'Семена арбуза (посадить)', cat: 'b', build: e => stemModel('m', e.p.att) },
   pumpkin_stem: { n: 'Семена тыквы (посадить)', cat: 'b', build: e => stemModel('p', e.p.att) },
@@ -686,25 +703,36 @@ function tower() {
   g.add(tb(.6, .09, .02, 0, 2.21, -.545, mat('#ffb347', { glow: true })));
   return g;
 }
-// Ты (игрок): синяя фишка без лица из игры; правая рука с топором машет (userData.swing)
+// Ты (игрок): своя синяя фишка, не персонаж игры. Части на шарнирах — движок двигает их в демо:
+// ноги и левая рука шагают, правая рука с топором бьёт (userData.swing), корпус качается и наклоняется.
 function player(o = {}) {
-  const shirt = mat('tok_shirt'), pants = mat('tok_pants'), skin = mat('tok_ivory');
-  const g = grp(
-    tb(.2, .62, .22, -.12, .31, 0, pants), tb(.2, .62, .22, .12, .31, 0, pants),
-    tb(.5, .66, .28, 0, .95, 0, shirt), tb(.14, .56, .16, -.32, 1.0, 0, shirt),
-  );
-  const hd = ball(.46, skin); hd.position.y = 1.52;
-  for (const x of [-.09, .09]) hd.add(tb(.06, .06, .02, x, .02, -.237, mat('#2b2b2b')));
-  hd.add(tb(.48, .12, .48, 0, .2, .02, mat('#5a3d22')));
-  g.add(hd);
-  const arm = new THREE.Group(); arm.position.set(.32, 1.24, 0);
-  arm.add(tb(.14, .56, .16, 0, -.26, 0, shirt), tb(.12, .1, .14, 0, -.58, 0, skin));
-  if (o.tool !== 'none') {
-    arm.add(tb(.05, .05, .5, 0, -.58, -.2, mat('#7a5a33')));
-    arm.add(tb(.05, .22, .14, 0, -.52, -.43, mat('#c9c9c9')));
-  }
-  arm.rotation.x = .25;
-  g.add(arm); g.userData.swing = arm;
+  const shirt = mat('tok_shirt'), pants = mat('tok_pants'), skin = mat('tok_ivory'), dark = mat('#3a2a1c'), hair = mat('#5a3d22');
+  const g = new THREE.Group(), body = new THREE.Group();
+  const leg = x => {
+    const l = new THREE.Group(); l.position.set(x, .62, 0);
+    l.add(tb(.2, .5, .22, 0, -.25, 0, pants), tb(.21, .12, .25, 0, -.56, -.015, dark));
+    g.add(l); return l;
+  };
+  const legs = [leg(-.115), leg(.115)];
+  body.add(tb(.5, .62, .28, 0, .93, 0, shirt), tb(.52, .07, .3, 0, .66, 0, dark), tb(.12, .05, .02, 0, .66, -.152, mat('#c9a24a')));
+  const hd = ball(.46, skin); hd.position.y = 1.5;
+  for (const x of [-.09, .09]) hd.add(tb(.06, .07, .02, x, .02, -.237, mat('#2b2b2b')));
+  hd.add(tb(.48, .12, .48, 0, .2, .02, hair), tb(.48, .22, .08, 0, .08, .21, hair), tb(.1, .04, .02, 0, -.1, -.236, mat('#c98f6a')));
+  body.add(hd);
+  const arm = (x, tool) => {
+    const a = new THREE.Group(); a.position.set(x, 1.2, 0);
+    a.add(tb(.14, .5, .16, 0, -.23, 0, shirt), tb(.13, .12, .15, 0, -.53, 0, skin));
+    if (tool) {
+      // топор: рукоять вперёд из кулака, лезвие вверх
+      a.add(tb(.045, .045, .56, 0, -.55, -.22, mat('#7a5a33')));
+      a.add(tb(.05, .24, .15, 0, -.47, -.44, mat('#cfd4d8')), tb(.052, .07, .05, 0, -.36, -.52, mat('#9aa2a8')));
+    }
+    body.add(a); return a;
+  };
+  const armL = arm(-.33), armR = arm(.33, o.tool !== 'none');
+  armR.rotation.x = .25;
+  g.add(body);
+  g.userData = { swing: armR, armL, legs, body };
   return g;
 }
 function boat() {
@@ -751,12 +779,13 @@ export const ENTS = {
   boat: { n: 'Лодка', item: true, build: () => boat() },
   minecart: { n: 'Вагонетка', item: true, build: () => minecart() },
   hopper_minecart: { n: 'Вагонетка с воронкой', item: true, build: () => hopperCart() },
-  log_item: { n: 'Бревно', build: () => body([[.26, .26, .26, 0, .13, 0, '#e6e2d6'], [.27, .04, .27, 0, .17, 0, '#2b2b2b']]) },
-  melon_slice: { n: 'Ломтик арбуза', build: () => body([[.3, .07, .14, 0, .035, -.02, '#d8413a'], [.3, .07, .05, 0, .035, .08, '#4f8f2a'], [.04, .075, .03, -.06, .04, -.03, '#2a1a12'], [.04, .075, .03, .07, .04, -.05, '#2a1a12']]) },
-  pumpkin_item: { n: 'Тыква', build: () => body([[.3, .28, .3, 0, .14, 0, '#e38a1f'], [.05, .08, .05, 0, .32, 0, '#6b4a2b']]) },
-  cane_item: { n: 'Тростник', build: () => body([[.08, .42, .08, -.06, .21, 0, '#9ccf62'], [.08, .38, .08, .06, .19, .03, '#8fc95a']]) },
-  iron: { n: 'Железный слиток', build: ITEM('#dedede') },
-  bamboo_item: { n: 'Бамбук', build: () => body([[.1, .45, .1, 0, .22, 0, '#6a9c30']]) },
+  stick: { n: 'Палка', drop: true, build: () => body([[.06, .36, .06, 0, .18, 0, '#8a6439', .5]]) },
+  log_item: { n: 'Бревно', drop: true, build: () => body([[.26, .26, .26, 0, .13, 0, '#e6e2d6'], [.27, .04, .27, 0, .17, 0, '#2b2b2b']]) },
+  melon_slice: { n: 'Ломтик арбуза', drop: true, build: () => body([[.3, .07, .14, 0, .035, -.02, '#d8413a'], [.3, .07, .05, 0, .035, .08, '#4f8f2a'], [.04, .075, .03, -.06, .04, -.03, '#2a1a12'], [.04, .075, .03, .07, .04, -.05, '#2a1a12']]) },
+  pumpkin_item: { n: 'Тыква', drop: true, build: () => body([[.3, .28, .3, 0, .14, 0, '#e38a1f'], [.05, .08, .05, 0, .32, 0, '#6b4a2b']]) },
+  cane_item: { n: 'Тростник', drop: true, build: () => body([[.08, .42, .08, -.06, .21, 0, '#9ccf62'], [.08, .38, .08, .06, .19, .03, '#8fc95a']]) },
+  iron: { n: 'Железный слиток', drop: true, build: ITEM('#dedede') },
+  bamboo_item: { n: 'Бамбук', drop: true, build: () => body([[.1, .45, .1, 0, .22, 0, '#6a9c30']]) },
   potion: { n: 'Взрывное зелье слабости', build: () => body([[.22, .26, .22, 0, .13, 0, '#5a5f6e'], [.09, .1, .09, 0, .31, 0, '#c9d2da']]) },
   gapple: { n: 'Золотое яблоко', build: () => body([[.28, .26, .28, 0, .13, 0, '#f0c53d'], [.04, .1, .04, 0, .3, 0, '#6b4a2b']]) },
 };

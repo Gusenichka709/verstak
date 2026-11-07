@@ -1,6 +1,6 @@
 // Офлайн-режим: всё складываем в кэш при установке, отдаём из кэша и тихо обновляем из сети.
 // Новая версия сайта — поменяй VERSION, старый кэш удалится.
-const VERSION = 'verstak-17';
+const VERSION = 'verstak-18';
 const FILES = [
   './',
   'app.js',
@@ -18,6 +18,7 @@ const FILES = [
   'farms/iron.js',
   'farms/melon.js',
   'farms/tree.js',
+  'mech/hopperclock.js',
   'mech/index.js',
   'mech/obsclock.js',
   'mech/power.js',

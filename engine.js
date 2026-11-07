@@ -59,7 +59,7 @@ const smooth = t => t * t * (3 - 2 * t);
 const wobble = (b, k = 4.5, f = 2.5) => Math.exp(-k * b) * Math.cos(b * Math.PI * f);
 
 // как блок появляется: плоское и мелкое выпрыгивает, жидкость наливается, остальное падает сверху
-const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling', 'button', 'repeater', 'mark', 'iron_door']);
+const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling', 'button', 'repeater', 'comparator', 'mark', 'iron_door']);
 const FILL = new Set(['water', 'lava']);
 const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35 };
 const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42 }; // доля времени, когда «приземлился»: пыль и рамка
@@ -211,7 +211,7 @@ export class Viewer {
     this.anims = []; this.hlAnims = []; this.pending = new Set(); this.tween = null; this.active = null; this.seq = null; this.sub = null;
     this.cutReset = false; this.cutAuto = false; this.animEnd = 0; this.demoT0 = this.at;
     if (this.cur) this.cur.visible = false;
-    this.farm = farm; this.meshes = new Map(); this.entMeshes = new Map(); this.actors = null; this.pistons = [];
+    this.farm = farm; this.meshes = new Map(); this.entMeshes = new Map(); this.actors = null; this.pistons = []; this.powerCells = null;
     this.entries = []; this.hist = new Map(); this.dig = new Map(); this.ents = [];
     farm.steps.forEach((s, i) => {
       const step = i + 1;
@@ -253,8 +253,9 @@ export class Viewer {
       at: (x, y, z) => fa.get(K(x, y, z)),
       dustConn: e => ['n', 's', 'e', 'w'].filter(d => {
         const [dx, , dz] = DIRS[d]; const nb = fa.get(K(e.x + dx, e.y, e.z + dz));
-        if (!nb) return false;
+        if (!nb) return [1, -1].some(dy => fa.get(K(e.x + dx, e.y + dy, e.z + dz))?.t === 'dust'); // по ступеньке вверх или вниз
         if (nb.t === 'dust') return true;
+        if (nb.t === 'comparator') { const [fx, , fz] = DIRS[nb.p.f || 'n']; return (fx !== 0 && dx !== 0) || (fz !== 0 && dz !== 0); }
         if (nb.t === 'observer') { const [fx, , fz] = DIRS[nb.p.f || 'u']; return fx === dx && fz === dz; }
         if (nb.t === 'lever' || nb.t === 'button') return true;
         if (nb.t === 'repeater') { const [fx, , fz] = DIRS[nb.p.f || 'n']; return (fx !== 0 && dx !== 0) || (fz !== 0 && dz !== 0); } // только с концов, по оси повторителя
@@ -281,6 +282,12 @@ export class Viewer {
     obj.userData = { en, base: obj.position.clone() };
     obj.traverse(o => { o.userData.en = en; if (o.userData.cull) obj.userData.cm = o; if (o.userData.pistonHead) obj.userData.head = o; });
     if (obj.userData.head) this.pistons.push(obj);
+    if (en.t === 'dust') {
+      // у каждой клетки пыли свои материалы: демо зажигает её по силе сигнала
+      const dm = [];
+      obj.traverse(o => { if (!o.material) return; const c = o.material.clone(); c.onBeforeCompile = o.material.onBeforeCompile; c.userData.c0 = c.color.clone(); o.material = c; dm.push(c); });
+      obj.userData.dm = dm;
+    }
     this.blockRoot.add(obj); this.meshes.set(en.id, obj);
     return obj;
   }
@@ -922,7 +929,48 @@ export class Viewer {
     this.demoHide = (D.hide || []).map(([x, y, z, q, w]) => [this.hist.get(K(x, y, z)) || [], q, w]);
     this.demoHidden = new Set();
   }
+  // Сигнал по пыли в демо. power: [{ at: [x,y,z], lvl: 15, on: [[t0, t1], …] }] — источник в клетке пыли.
+  // Сила падает на 1 с каждым блоком; бежит по проводу с маленькой задержкой (в игре — мгновенно, это для глаза).
+  powerPrep() {
+    const cells = new Map();
+    for (const m of this.meshes.values()) if (m.userData.dm) cells.set(K(m.userData.en.x, m.userData.en.y, m.userData.en.z), m);
+    this.powerSrc = (this.farm.demo.power || []).map(src => {
+      const dist = new Map(), start = K(...src.at), q = [src.at];
+      if (!cells.has(start)) return null;
+      dist.set(start, 0);
+      while (q.length) {
+        const [x, y, z] = q.shift(), d = dist.get(K(x, y, z));
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) for (const dy of [0, 1, -1]) {
+          const k = K(x + dx, y + dy, z + dz);
+          if (cells.has(k) && !dist.has(k)) { dist.set(k, d + 1); q.push([x + dx, y + dy, z + dz]); }
+        }
+      }
+      return { ...src, lvl: src.lvl ?? 15, dist };
+    }).filter(Boolean);
+    this.powerCells = cells;
+  }
+  powerFrame(T) {
+    if (!this.powerCells) this.powerPrep();
+    const DT = .035;
+    for (const [k, m] of this.powerCells) {
+      let L = 0;
+      for (const s of this.powerSrc) {
+        const d = s.dist.get(k); if (d === undefined) continue;
+        if (s.on.some(([a, b]) => T >= a + d * DT && T < b + d * DT)) L = Math.max(L, s.lvl - d);
+      }
+      // без сигнала пыль тёмная, на 15 — яркая; между ними плавно
+      const f = L > 0 ? .38 + .62 * L / 15 : .2;
+      if (m.userData.pf === f) continue;
+      m.userData.pf = f;
+      for (const c of m.userData.dm) c.color.copy(c.userData.c0).multiplyScalar(f);
+    }
+  }
+  powerOff() {
+    if (!this.powerCells) return;
+    for (const m of this.powerCells.values()) { m.userData.pf = undefined; for (const c of m.userData.dm) c.color.copy(c.userData.c0); }
+  }
   resetDemo() {
+    this.powerOff();
     if (this.actors) this.actors.forEach(x => (x.obj.visible = false));
     for (const p of this.pistons) pistonExt(p.userData.head, 0);
     this.lastDemoT = undefined;
@@ -940,6 +988,32 @@ export class Viewer {
     const easeIn = i === 0 || same(ks[i - 1], ks[i]), easeOut = i + 2 >= ks.length || same(ks[i + 1], ks[i + 2]);
     const up = easeIn && easeOut ? smooth(u) : easeIn ? u * u : easeOut ? 1 - (1 - u) ** 2 : u;
     return p0.map((a, j) => a + ((p1[j] ?? a) - a) * (j < 3 ? up : smooth(u)));
+  }
+  // фишка «ты»: плавный поворот, шаги при движении, взмах топором с замахом и наклоном корпуса
+  animPerson(a, obj, T, x, z) {
+    const ud = obj.userData, ease = v => v * v * (3 - 2 * v);
+    if (a.yaws) {
+      let i = -1; a.yaws.forEach(([q], j) => { if (T >= q) i = j; });
+      const cur = i < 0 ? (a.yaw || 0) : a.yaws[i][1], prev = i < 1 ? (a.yaw || 0) : a.yaws[i - 1][1];
+      let d = cur - prev; d = Math.atan2(Math.sin(d), Math.cos(d));
+      const u = i < 0 ? 1 : ease(Math.min(1, (T - a.yaws[i][0]) / .22));
+      obj.rotation.y = prev + d * u;
+    }
+    const back = Viewer.sample(a.keys, T - .06);
+    const sp = back ? Math.hypot(x - back[0], z - back[2]) / .06 : 0;
+    const w = Math.min(1, sp / 1.2), ph = T * 11;
+    ud.legs[0].rotation.x = Math.sin(ph) * .75 * w; ud.legs[1].rotation.x = -Math.sin(ph) * .75 * w;
+    ud.armL.rotation.x = -Math.sin(ph) * .55 * w;
+    ud.body.position.y = Math.abs(Math.sin(ph)) * .05 * w + Math.sin(T * 2.1) * .008;
+    const on = a.swing && a.swing.find(([q, e]) => T >= q && T <= e);
+    let arm = .25 + Math.sin(ph) * .5 * w, lean = 0;
+    if (on) {
+      const p = ((T - on[0]) / (on[2] || .32)) % 1;
+      if (p < .45) arm = .6 + 2.1 * (1 - (1 - p / .45) ** 2);                          // замах: быстро и с торможением вверху
+      else if (p < .62) { const u = (p - .45) / .17; arm = 2.7 - 1.75 * u * u; lean = -.14 * u; } // удар: разгон вниз
+      else { const u = ease((p - .62) / .38); arm = .95 - .35 * u; lean = -.14 * (1 - u); }   // возврат
+    }
+    ud.swing.rotation.x = arm; ud.body.rotation.x = lean;
   }
   demoFrame(T) {
     const D = this.farm.demo; if (!D) return;
@@ -959,14 +1033,9 @@ export class Viewer {
       obj.position.set(x + sx, y, z);
       const bs = obj.userData.baseScale;
       if (bs) obj.scale.set(bs.x * s, bs.y * s, 1); else if (a.sy) obj.scale.set(1, s, 1); else obj.scale.setScalar(s);
-      // поворот по ключам [время, угол] (ступенькой) и взмах рукой (игрок рубит, жмёт кнопку)
-      if (a.yaws) { let r = a.yaw || 0; for (const [q, w] of a.yaws) if (T >= q) r = w; obj.rotation.y = r; }
-      const sw = obj.userData.swing;
-      if (sw) {
-        const on = a.swing && a.swing.find(([q, w]) => T >= q && T <= w);
-        const p = on ? ((T - on[0]) / (on[2] || .32)) % 1 : 0;
-        sw.rotation.x = on ? (p < .55 ? 1.1 + p / .55 * 1.5 : 2.6 - (p - .55) / .45 * 1.5) : .25;
-      }
+      if (obj.userData.legs) this.animPerson(a, obj, T, x, z);
+      // предмет на земле крутится и чуть подпрыгивает, как в игре
+      if (!a.label && a.e && ENTS[a.e].drop) { obj.rotation.y = T * 2.4 + x * 1.7; obj.position.y += .035 * (1 + Math.sin(T * 4.2 + z * 2)); }
       const fl = a.flash && a.flash.some(([q, w]) => T >= q && T <= w);
       for (const m of mats) {
         m.opacity = o;
@@ -974,10 +1043,16 @@ export class Viewer {
       }
     }
     // поршни: голова резко выстреливает и медленнее уходит назад
-    if (D.pistons && this.pistons.length) {
-      const st = Viewer.sample(D.pistons, T), ext = st ? st[0] : 0;
-      for (const p of this.pistons) pistonExt(p.userData.head, ext);
+    if ((D.pistons || D.pistonsAt) && this.pistons.length) {
+      // pistonsAt: { 'x,y,z': ключи } — свой ход у отдельных поршней (часы на воронке), остальные — по pistons
+      const all = D.pistons ? Viewer.sample(D.pistons, T) : null;
+      for (const p of this.pistons) {
+        const e = p.userData.en, own = D.pistonsAt?.[`${e.x},${e.y},${e.z}`];
+        const st = own ? Viewer.sample(own, T) : all;
+        pistonExt(p.userData.head, st ? st[0] : 0);
+      }
     }
+    if (D.power) this.powerFrame(T);
     // разлёт крошек в нужный момент цикла: срезанный бамбук, голем в лаве
     const pT = this.lastDemoT;
     if (pT !== undefined) for (const [bt, x, y, z, kind, n = 8, floor = y] of D.bursts || []) {

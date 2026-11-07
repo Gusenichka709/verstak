@@ -114,6 +114,7 @@ export default {
   demo: {
     period: 12, actors,
     pistons: [[4.8, 0], [4.95, 1], [5.25, 1], [5.4, 0]],
+    power: [{ at: [5, 4, 2], on: [[4.75, 5.1]] }],   // сработал наблюдатель 6-й колонки
     bursts: [
       ...Array.from({ length: W }, (_, x) => [4.95, x, 3, 0, '#8fc95a', 6, 2]),
       ...Array.from({ length: W }, (_, x) => x).filter(third).map(x => [4.95, x, 4, 0, '#9ccf62', 4, 2]),

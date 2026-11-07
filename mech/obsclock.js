@@ -45,6 +45,7 @@ export default {
   ],
   demo: {
     period: 4, pistons: pist,
+    power: pist.filter(k => k[1] === 1 && pist.indexOf(k) % 4 === 1).map(([t]) => ({ at: [2, 0, 0], on: [[t - .05, t + .07]] })),
     actors: [
       { label: 'видят друг друга: щёлк-щёлк', keys: [[.3, .5, 2.3, .5], [3.6, .5, 2.3, .5]] },
       { label: 'импульс каждые 0,3 с', color: '#ff9a3c', keys: [[.8, 3.5, 1.6, .5], [3.8, 3.5, 1.6, .5]] },

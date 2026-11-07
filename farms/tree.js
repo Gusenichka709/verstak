@@ -54,7 +54,7 @@ const actors = [{ e: 'player', keys: me, yaw: 0, yaws, swing }];
 // саженцы до роста и после посадки
 XS.forEach((x, i) => {
   actors.push({ b: 'birch_sapling', keys: [[0, x, 0, 0], [GROW, x, 0, 0]] });
-  actors.push({ b: 'birch_sapling', keys: [[PLANT[i], x, 0, 0, .01], [PLANT[i] + .25, x, 0, 0, 1], [END, x, 0, 0, 1]] });
+  actors.push({ b: 'birch_sapling', keys: [[PLANT[i], x, 0, 0, .01], [PLANT[i] + .16, x, 0, 0, 1.25], [PLANT[i] + .3, x, 0, 0, 1], [END, x, 0, 0, 1]] }); // выскакивает с перелётом
 });
 // срубленное бревно падает к стволу и подбирается тобой
 XS.forEach((x, i) => {
@@ -133,17 +133,20 @@ export default {
   ],
   demo: {
     period: END, actors,
+    power: [{ at: [0, 1, 2], on: PRESS.map(t => [t + .05, t + .3]) }],   // кнопка → пыль → блоки → раздатчики
     bursts: [
       ...PRESS.flatMap(t => XS.map(x => [t + .15, x, .4, 0, '#f2eee2', 4, 0])),
       ...XS.map((x, i) => [GROW, x, HS[i] - 1, 0, '#7fae45', 10, 0]),
       ...XS.flatMap((x, i) => Array.from({ length: HS[i] }, (_, j) => [chopAt(i, j), x, j, 0, '#e6e2d6', 3, 0])),
-      ...XS.map((x, i) => [FALL, x, HS[i] - 1, 0, '#7fae45', 10, 0]),
+      ...XS.flatMap((x, i) => [0, .35, .7].map((d, j) => [FALL + d, x + j - 1, HS[i] - 1 - j, (j % 2) - .5, '#7fae45', 6, 0])),
     ],
     hide: [
-      ...XS.flatMap((x, i) => Array.from({ length: HS[i] }, (_, y) => [x, y, 0, 0, GROW])),
+      // дерево вырастает волной: ствол снизу вверх, потом крона изнутри наружу
+      ...XS.flatMap((x, i) => Array.from({ length: HS[i] }, (_, y) => [x, y, 0, 0, GROW + y * .045])),
       ...XS.flatMap((x, i) => Array.from({ length: HS[i] }, (_, y) => [x, y, 0, chopAt(i, y), END])),
-      ...LEAVES.map(([x, y, z]) => [x, y, z, 0, GROW]),
-      ...LEAVES.map(([x, y, z]) => [x, y, z, FALL, END]),
+      ...LEAVES.map(([x, y, z]) => [x, y, z, 0, GROW + .2 + y * .03 + (hsh(x, y, z) % 7) * .025]),
+      // листва без ствола осыпается не разом, а вразнобой
+      ...LEAVES.map(([x, y, z]) => [x, y, z, FALL + (hsh(x, y, z) % 13) * .07, END]),
     ],
   },
 };
