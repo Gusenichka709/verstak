@@ -257,6 +257,8 @@ D.comparator_top = (g, r, P) => {
   noise(P, r, ['#9a9a9a', '#a3a3a3', '#8f8f8f']); frame(g, '#707070');
   g.fillStyle = '#6b1d16'; g.fillRect(4, 3, 8, 1); g.fillRect(7, 3, 2, 10); g.fillStyle = '#b8261b'; g.fillRect(6, 1, 4, 2);
 };
+D.lamp_off = (g, r, P) => { noise(P, r, ['#6b4a2a', '#5e3f22', '#77532f']); g.fillStyle = '#3d2a17'; g.fillRect(0, 7, 16, 2); g.fillRect(7, 0, 2, 16); frame(g, '#3d2a17'); };
+D.lamp_on = (g, r, P) => { noise(P, r, ['#ffd27a', '#ffc25a', '#ffe09a', '#f5b04a']); g.fillStyle = '#b8742a'; g.fillRect(0, 7, 16, 2); g.fillRect(7, 0, 2, 16); frame(g, '#a0601f'); };
 D.lectern_side = (g, r, P) => { D.dark_planks(g, r, P); frame(g, '#3f2c17'); };
 D.lectern_top = (g, r, P) => { D.dark_planks(g, r, P); g.fillStyle = '#e9e2cf'; g.fillRect(3, 4, 10, 8); g.fillStyle = '#8c2a22'; g.fillRect(7, 4, 2, 8); };
 D.blast_front = (g, r, P) => {
@@ -542,12 +544,21 @@ function signModel(side) {
   const w = mat('planks');
   return onWall(grp(bx(.875, .5, .0833, .5, .55, .042, w)), side);
 }
-function torchModel(side) {
-  const stick = mat('#7a5a33'), flame = mat('#ffd35a', { glow: true });
-  if (!side) return grp(bx(.125, .6, .125, .5, .3, .5, stick), bx(.14, .14, .14, .5, .66, .5, flame));
-  const t = grp(bx(.125, .6, .125, 0, .3, 0, stick), bx(.14, .14, .14, 0, .66, 0, flame));
-  t.rotation.x = .38; t.position.set(.5, .2, .1);
-  return onWall(grp(t), side);
+function torchModel(side, red) {
+  // red — красный факел: горит, пока блок, на котором он висит, НЕ запитан (setLit гасит его в демо)
+  const stick = mat('#7a5a33'), on = mat(red ? '#ff3b26' : '#ffd35a', { glow: true }), off = mat('#5a1a12');
+  const fl = bx(.14, .14, .14, 0, .66, 0, on);
+  const t = grp(bx(.125, .6, .125, 0, .3, 0, stick), fl);
+  if (side) { t.rotation.x = .38; t.position.set(.5, .2, .1); } else t.position.set(.5, 0, .5);
+  const g = side ? onWall(grp(t), side) : grp(t);
+  if (red) { g.userData.setLit = v => { fl.material = v ? on : off; }; g.userData.litDef = true; }
+  return g;
+}
+function lampModel(lit) {
+  const on = mat('lamp_on', { glow: true }), off = mat('lamp_off');
+  const m = bx(1, 1, 1, .5, .5, .5, lit ? on : off);
+  const g = grp(m); g.userData.setLit = v => { m.material = v ? on : off; }; g.userData.litDef = !!lit;
+  return g;
 }
 function ladderModel(side) {
   const p = new THREE.Mesh(PLANE, mat('ladder')); p.position.set(.5, .5, .03);
@@ -562,7 +573,10 @@ function leverModel(side) {
   const base = bx(.375, .5, .1875, .5, .5, .094, mat('cobble'));
   const h = bx(.1, .5, .1, 0, .22, 0, mat('#7a5a33')); h.rotation.x = .6;
   const hg = grp(h); hg.position.set(.5, .5, .19);
-  return onWall(grp(base, hg), side);
+  const g = onWall(grp(base, hg), side);
+  // включённый рычаг — ручка вниз (в демо щёлкает)
+  g.userData.setLit = v => { h.rotation.x = v ? -.6 : .6; }; g.userData.litDef = false;
+  return g;
 }
 function railModel(axis) {
   const p = new THREE.Mesh(PLANE, mat('rail')); p.rotation.x = -Math.PI / 2; p.position.set(.5, .012, .5);
@@ -617,6 +631,8 @@ export const BLOCKS = {
   bamboo_shoot: { n: 'Бамбук (посадить)', cat: 'b', build: () => shootModel() },
   sign: { n: 'Табличка', cat: 'm', build: e => signModel(e.p.side) },
   torch: { n: 'Факел', cat: 'm', build: e => torchModel(e.p.side) },
+  rtorch: { n: 'Красный факел (пыль + палка)', cat: 'r', build: e => torchModel(e.p.side, true) },
+  lamp: { n: 'Лампа (светокамень + 4 пыли)', cat: 'r', build: e => lampModel(e.p.on) },
   ladder: { n: 'Лестница', cat: 'm', build: e => ladderModel(e.p.side) },
   rail: { n: 'Рельсы', cat: 'm', build: e => railModel(e.p.axis) },
   powered_rail: { n: 'Энергорельс', cat: 'm', build: e => poweredRailModel(e.p.axis, e.p.on) },

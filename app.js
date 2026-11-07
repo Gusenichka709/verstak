@@ -9,6 +9,7 @@ import POT from './cheats/potions.js';
 import BREW from './cheats/brew.js';
 import { wsIcon, tipIcon } from './icons.js';
 import TIPS from './cheats/tips.js';
+import RS from './cheats/redstone.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -116,7 +117,7 @@ function renderPicker() {
       <span class="row"><b>${esc(f.title)}</b><span class="rt"><small class="pp"></small>${tierHtml(f.tier || 1)}</span></span><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i><em class="pbar" aria-hidden="true"></em>
     </a>`;
   }
-  $('#picker').innerHTML = `<div class="pchips pfilt" role="group" aria-label="Категории">${btn('all', 'Все', farms.length)}${used.map(([id, n]) => btn(id, n, farms.filter(f => f.cat === id).length)).join('')}</div>
+  $('#picker').innerHTML = `${mode === 'mech' ? '<a class="pmemo" href="#redstone"><b>Памятка</b> что делает каждый блок →</a>' : ''}<div class="pchips pfilt" role="group" aria-label="Категории">${btn('all', 'Все', farms.length)}${used.map(([id, n]) => btn(id, n, farms.filter(f => f.cat === id).length)).join('')}</div>
     <div class="plist">${list}<span class="pickbar" aria-hidden="true"></span></div>`;
   applyFilter(false);
   stagger($('#picker .plist'), '.pick');
@@ -636,6 +637,7 @@ function legendHtml(f) {
   if (puts.some(e => e.t === 'water' && e.p.src)) out.push('<span><i class="sym">◯</i>вылей ведро</span>');
   if (puts.some(e => e.t === 'water' && e.p.flow)) out.push('<span><i class="sym">➜</i>течёт вода</span>');
   if (has('observer')) out.push('<span><i class="mob" style="--c:#c42a1e"></i>выход наблюдателя</span>');
+  if (has('rtorch')) out.push('<span><i class="mob" style="--c:#ff3b26"></i>красный факел: гаснет от сигнала</span>');
   if (has('repeater')) out.push('<span><i class="sym">▲</i>повторитель: выход по стрелке</span>');
   for (const k in MOB) if (ents.has(k)) out.push(`<span><i class="mob" style="--c:${MOB[k][0]}"></i>${MOB[k][1]}</span>`);
   return out.join('');
@@ -916,6 +918,19 @@ function renderTips() {
     </div>`;
 }
 
+/* ---------- памятка по редстоуну (вкладка «Механизмы») ---------- */
+function renderRedstone() {
+  $('#v-redstone').innerHTML = `
+    <header class="sheethead"><a class="linkbtn back" href="#${esc(lastMech || mechs[0].id)}">← к схемам</a><h2>Памятка: блоки редстоуна</h2><p>${esc(RS.intro)}</p></header>
+    ${RS.groups.map(g => `<h3 class="rsh">${esc(g.k)}</h3>
+    <div class="cards tips rs">${g.items.map(b => `
+      <article class="tipcard">
+        <header><i class="rsdot" style="--c:${b.c}"></i><h3>${esc(b.n)}</h3></header>
+        <p class="rst">${esc(b.t)}</p>
+        <ul>${b.list.map(x => `<li>${x}</li>`).join('')}</ul>
+      </article>`).join('')}</div>`).join('')}`;
+}
+
 /* ---------- маршрут ---------- */
 // первый заход во вкладку — карточки лесенкой, дальше — одно короткое проявление
 const seen = new Set();
@@ -934,8 +949,9 @@ function viewIn(v) {
 let lastFarm = '', lastMech = '';
 function route() {
   const h = location.hash.slice(1);
-  const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы', calc: 'Расчёт' };
+  const SHEETS = { villagers: 'Жители', potions: 'Зелья', tips: 'Советы', calc: 'Расчёт', redstone: 'Памятка по редстоуну' };
   if (h === 'calc') renderCalc();
+  if (h === 'redstone') renderRedstone();
   const sheet = SHEETS[h] ? h : null;
   // вкладка «Механизмы»: #mech или id схемы; иначе фермы
   const mech = h === 'mech' || mechs.some(m => m.id === h);
@@ -943,7 +959,7 @@ function route() {
   if (!sheet && want !== mode) { mode = want; renderPicker(); }
   $('#v-farms').hidden = !!sheet;
   for (const k in SHEETS) $('#v-' + k).hidden = sheet !== k;
-  document.querySelectorAll('.tabs a').forEach(a => a.setAttribute('aria-current', (a.dataset.v === (sheet || mode)) ? 'page' : 'false'));
+  document.querySelectorAll('.tabs a').forEach(a => a.setAttribute('aria-current', (a.dataset.v === (sheet === 'redstone' ? 'mech' : sheet || mode)) ? 'page' : 'false'));
   moveTabPill();
   viewIn(sheet || 'farms');
   if (sheet) { pausePlay(true); viewer?.setActive(false); document.title = SHEETS[sheet] + ' — Верстак'; return; }

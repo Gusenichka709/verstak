@@ -59,7 +59,7 @@ const smooth = t => t * t * (3 - 2 * t);
 const wobble = (b, k = 4.5, f = 2.5) => Math.exp(-k * b) * Math.cos(b * Math.PI * f);
 
 // как блок появляется: плоское и мелкое выпрыгивает, жидкость наливается, остальное падает сверху
-const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling', 'button', 'repeater', 'comparator', 'mark', 'iron_door']);
+const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling', 'button', 'repeater', 'comparator', 'rtorch', 'mark', 'iron_door']);
 const FILL = new Set(['water', 'lava']);
 const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35 };
 const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42 }; // доля времени, когда «приземлился»: пыль и рамка
@@ -211,7 +211,7 @@ export class Viewer {
     this.anims = []; this.hlAnims = []; this.pending = new Set(); this.tween = null; this.active = null; this.seq = null; this.sub = null;
     this.cutReset = false; this.cutAuto = false; this.animEnd = 0; this.demoT0 = this.at;
     if (this.cur) this.cur.visible = false;
-    this.farm = farm; this.meshes = new Map(); this.entMeshes = new Map(); this.actors = null; this.pistons = []; this.powerCells = null;
+    this.farm = farm; this.meshes = new Map(); this.entMeshes = new Map(); this.actors = null; this.pistons = []; this.powerCells = null; this.litCells = null;
     this.entries = []; this.hist = new Map(); this.dig = new Map(); this.ents = [];
     farm.steps.forEach((s, i) => {
       const step = i + 1;
@@ -257,7 +257,7 @@ export class Viewer {
         if (nb.t === 'dust') return true;
         if (nb.t === 'comparator') { const [fx, , fz] = DIRS[nb.p.f || 'n']; return (fx !== 0 && dx !== 0) || (fz !== 0 && dz !== 0); }
         if (nb.t === 'observer') { const [fx, , fz] = DIRS[nb.p.f || 'u']; return fx === dx && fz === dz; }
-        if (nb.t === 'lever' || nb.t === 'button') return true;
+        if (nb.t === 'lever' || nb.t === 'button' || nb.t === 'rtorch') return true;
         if (nb.t === 'repeater') { const [fx, , fz] = DIRS[nb.p.f || 'n']; return (fx !== 0 && dx !== 0) || (fz !== 0 && dz !== 0); } // только с концов, по оси повторителя
         return false;
       }),
@@ -280,7 +280,7 @@ export class Viewer {
     obj.add(BLOCKS[en.t].build(en, this.world()));
     obj.position.set(en.x, en.y, en.z);
     obj.userData = { en, base: obj.position.clone() };
-    obj.traverse(o => { o.userData.en = en; if (o.userData.cull) obj.userData.cm = o; if (o.userData.pistonHead) obj.userData.head = o; });
+    obj.traverse(o => { o.userData.en = en; if (o.userData.cull) obj.userData.cm = o; if (o.userData.pistonHead) obj.userData.head = o; if (o.userData.setLit) { obj.userData.setLit = o.userData.setLit; obj.userData.litDef = o.userData.litDef; } });
     if (obj.userData.head) this.pistons.push(obj);
     if (en.t === 'dust') {
       // у каждой клетки пыли свои материалы: демо зажигает её по силе сигнала
@@ -971,6 +971,7 @@ export class Viewer {
   }
   resetDemo() {
     this.powerOff();
+    for (const [m] of this.litCells || []) { m.userData.litNow = undefined; m.userData.setLit(m.userData.litDef); }
     if (this.actors) this.actors.forEach(x => (x.obj.visible = false));
     for (const p of this.pistons) pistonExt(p.userData.head, 0);
     this.lastDemoT = undefined;
@@ -1053,6 +1054,11 @@ export class Viewer {
       }
     }
     if (D.power) this.powerFrame(T);
+    // lit: { 'x,y,z': [[t0, t1], …] } — рычаг включён, красный факел горит, лампа светит
+    if (D.lit) {
+      if (!this.litCells) { this.litCells = []; for (const m of this.meshes.values()) { const e = m.userData.en, iv = m.userData.setLit && D.lit[`${e.x},${e.y},${e.z}`]; if (iv) this.litCells.push([m, iv]); } }
+      for (const [m, iv] of this.litCells) { const on = iv.some(([a, b]) => T >= a && T < b); if (m.userData.litNow !== on) { m.userData.litNow = on; m.userData.setLit(on); } }
+    }
     // разлёт крошек в нужный момент цикла: срезанный бамбук, голем в лаве
     const pT = this.lastDemoT;
     if (pT !== undefined) for (const [bt, x, y, z, kind, n = 8, floor = y] of D.bursts || []) {

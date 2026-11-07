@@ -1,12 +1,13 @@
 // Офлайн-режим: всё складываем в кэш при установке, отдаём из кэша и тихо обновляем из сети.
 // Новая версия сайта — поменяй VERSION, старый кэш удалится.
-const VERSION = 'verstak-18';
+const VERSION = 'verstak-19';
 const FILES = [
   './',
   'app.js',
   'blocks.js',
   'cheats/brew.js',
   'cheats/potions.js',
+  'cheats/redstone.js',
   'cheats/tips.js',
   'cheats/villagers.js',
   'engine.js',
@@ -19,6 +20,9 @@ const FILES = [
   'farms/melon.js',
   'farms/tree.js',
   'mech/hopperclock.js',
+  'mech/gand.js',
+  'mech/gnot.js',
+  'mech/gor.js',
   'mech/index.js',
   'mech/obsclock.js',
   'mech/power.js',
