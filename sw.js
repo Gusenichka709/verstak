@@ -1,6 +1,6 @@
 // Офлайн-режим: всё складываем в кэш при установке, отдаём из кэша и тихо обновляем из сети.
 // Новая версия сайта — поменяй VERSION, старый кэш удалится.
-const VERSION = 'verstak-61';
+const VERSION = 'verstak-62';
 const FILES = [
   './',
   'app.js',
@@ -31,6 +31,7 @@ const FILES = [
   'mech/gxor.js',
   'mech/index.js',
   'mech/obsclock.js',
+  'mech/torchblink.js',
   'mech/power.js',
   'fonts/golos-text-cyrillic-400-normal.woff2',
   'fonts/golos-text-cyrillic-500-normal.woff2',
