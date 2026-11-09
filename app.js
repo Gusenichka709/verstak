@@ -711,15 +711,16 @@ function playBlocks() {
   sc.value = i + 1; viewer.scrub(i + 1); blkLabel();
   playing.timer = setTimeout(playBlocks, (i < viewer.digCells(viewer.k).length ? 40 : 120) / viewer.speed);
 }
-function play() {
+// from — с какого шага собирать: 1 — «Собрать с нуля», viewer.k — «С этого шага»
+function play(from = 1) {
   if (playing) return pausePlay(!playing.paused);
-  const b = $('#play'), N = farm.steps.length;
+  const b = $('#play'), N = farm.steps.length, k = Math.min(Math.max(1, from), N);
   playing = {};
   b.classList.add('playing'); b.setAttribute('aria-pressed', 'true');
   playLabel('⏸ Пауза');
   badge($('#stop'), true);
-  setStep(1, true, true);
-  b.style.setProperty('--p', 1 / N);
+  setStep(k, true, true);
+  b.style.setProperty('--p', k / N);
   playArm(playWait());
 }
 
@@ -786,7 +787,8 @@ function initControls() {
   window.__viewer = viewer;
   $('#prev').onclick = () => { stopPlay(); setStep(viewer.k - 1, false); };
   $('#next').onclick = () => { stopPlay(); setStep(viewer.k + 1, true); };
-  $('#play').onclick = play;
+  $('#play').onclick = () => play(1);
+  $('#playHere').onclick = () => { if (playing) stopPlay(); play(viewer.k || 1); };
   $('#stop').onclick = () => stopPlay();
   $('#bScrub').oninput = e => blkGo(+e.target.value);
   $('#bPrev').onclick = () => blkGo(viewer.progress() - 1);
