@@ -126,6 +126,7 @@ function onPick(p) {
   const base = p.en ? [p.en.x, p.en.y, p.en.z] : p.ground;
   if (!base || !p.n) return;
   const c = [base[0] + p.n[0], base[1] + p.n[1], base[2] + p.n[2]];
+  used(tool.t);
   if (MOBS.includes(tool.t)) {
     snapshot();
     s.ents.push({ id: 'm' + Date.now().toString(36), e: tool.t, x: c[0] + .5, y: c[1], z: c[2] + .5, yaw: { n: 0, s: Math.PI, e: -Math.PI / 2, w: Math.PI / 2 }[tool.f] || 0 });
@@ -274,7 +275,20 @@ function palette() {
     const items = B.filter(([, d]) => d.cat === cat);
     return items.length ? grp(cat, name, items.map(([k, d]) => item(k, d.n)).join('')) : '';
   }).join('') + grp('mob', 'Мобы и предметы', MOBS.map(k => item(k, ENTS[k].n)).join(''));
-  $('#edPal').innerHTML = `<input id="edFind" type="search" placeholder="Найти блок…" aria-label="Найти блок">${sec}`;
+  $('#edPal').innerHTML = `<input id="edFind" type="search" placeholder="Найти блок…" aria-label="Найти блок"><div id="edRecent"></div>${sec}`;
+  recentGrid();
+}
+// «Недавние»: последние поставленные блоки и мобы — сверху палитры, чтобы не листать
+let recent = load('editorRecent', []).filter(k => BLOCKS[k] || MOBS.includes(k));
+const nameOf = k => MOBS.includes(k) ? ENTS[k].n : BLOCKS[k].n;
+function recentGrid() {
+  const el = $('#edRecent'); if (!el) return;
+  el.innerHTML = recent.length ? grp('recent', 'Недавние', recent.map(k => item(k, nameOf(k))).join('')) : '';
+}
+function used(k) {
+  if (recent[0] === k) return;
+  recent = [k, ...recent.filter(x => x !== k)].slice(0, 8); save('editorRecent', recent);
+  recentGrid();
 }
 // раздел палитры сворачивается; свёрнутые запоминаем
 const shut = new Set(load('editorShut', []));
