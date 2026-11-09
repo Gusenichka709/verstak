@@ -121,7 +121,7 @@ function renderPicker() {
   for (const f of ordered()) {
     if (f.cat !== last) { last = f.cat; list += `<h5 data-cat="${f.cat}">${esc(CATL()[catIdx(f.cat)]?.[1] || 'Разное')}</h5>`; }
     list += `<a class="pick" href="#${f.id}" data-id="${f.id}" data-cat="${f.cat}" aria-current="false">
-      <span class="row"><b>${esc(f.title)}</b><span class="rt"><small class="pp"></small><small class="tst" title="${esc(testMark(f)[0])}">${f.tested ? '✅' : '⚠️'}</small>${tierHtml(f.tier || 1)}</span></span><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i><em class="pbar" aria-hidden="true"></em>
+      <span class="row"><b>${esc(f.title)}</b><span class="rt"><small class="pp"></small>${FARM_IDS.includes(f.id) ? `<small class="tst" title="${esc(testMark(f)[0])}" aria-label="${esc(testMark(f)[0])}">${f.tested ? '✅' : '⚠️'}</small>` : ''}${tierHtml(f.tier || 1)}</span></span><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i><em class="pbar" aria-hidden="true"></em>
     </a>`;
   }
   $('#picker').innerHTML = `${mode === 'mech' ? '<a class="pmemo" href="#redstone"><b>Памятка</b> что делает каждый блок →</a>' : ''}<div class="pchips pfilt" role="group" aria-label="Категории">${btn('all', 'Все', farms.length)}${used.map(([id, n]) => btn(id, n, farms.filter(f => f.cat === id).length)).join('')}</div>
