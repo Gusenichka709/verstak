@@ -17,7 +17,7 @@ const SKIP = new Set(['air', 'melon', 'pumpkin', 'birch_leaves', 'birch_log']);
 // куда может смотреть блок
 const F6 = ['n', 's', 'e', 'w', 'u', 'd'], F4 = ['n', 's', 'e', 'w'];
 const FACING = { piston: F6, sticky_piston: F6, observer: F6, chest: F4, blast_furnace: F4, bed: F4, repeater: F4, comparator: F4, dispenser: F4, hopper: ['d', 'n', 's', 'e', 'w'] };
-const DIRN = { n: 'север', s: 'юг', e: 'восток', w: 'запад', u: 'вверх', d: 'вниз' };
+const DIRN = { n: 'север (−Z)', s: 'юг (+Z)', e: 'восток (+X)', w: 'запад (−X)', u: 'вверх (+Y)', d: 'вниз (−Y)' };
 // что вешается на опору: опору берём из грани, по которой кликнул
 const WALLED = new Set(['lever', 'button', 'torch', 'rtorch', 'sign', 'ladder', 'iron_door', 'trapdoor']);
 const OPP = { '1,0,0': 'w', '-1,0,0': 'e', '0,0,1': 'n', '0,0,-1': 's' };
@@ -161,7 +161,36 @@ function chunkGrid() {
   }
   chunks.visible = tool.chunks !== false;
   chunks.position.y = (cut !== null && cut < -1 ? cut + 1 : 0) + .02; // сетка лежит на верху грунта (и на срезе)
-  ev.root.add(chunks); ev.dirty = true;
+  ev.root.add(chunks); compass(); ev.dirty = true;
+}
+// оси в углу среднего чанка (его клетка 0, 0) и стороны света по краям поля
+let axes = null;
+function label(text, color) {
+  const c = document.createElement('canvas'), x = c.getContext('2d'); c.width = 256; c.height = 64;
+  x.font = 'bold 40px system-ui, sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.lineWidth = 8; x.strokeStyle = 'rgba(0,0,0,.75)'; x.strokeText(text, 128, 32); x.fillStyle = color; x.fillText(text, 128, 32);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }));
+  sp.scale.set(4, 1, 1); sp.renderOrder = 11; return sp;
+}
+function compass() {
+  if (!axes) {
+    axes = new THREE.Group();
+    const o = new THREE.Vector3(0, 0, 0);
+    for (const [d, col, txt] of [[[1, 0, 0], 0xe5533d, '+X восток'], [[0, 0, 1], 0x3d7be5, '+Z юг'], [[0, 1, 0], 0x4fbf4f, '+Y верх']]) {
+      const v = new THREE.Vector3(...d);
+      const ar = new THREE.ArrowHelper(v, o, 4, col, .8, .45);
+      ar.traverse(m => { if (m.material) { m.material.depthTest = false; m.renderOrder = 11; } });
+      const l = label(txt, '#' + col.toString(16).padStart(6, '0')); l.position.copy(v.clone().multiplyScalar(5.3)); l.scale.set(3, .75, 1);
+      axes.add(ar, l);
+    }
+    for (const [txt, x, z] of [['С (−Z)', 8, -18], ['Ю (+Z)', 8, 34], ['З (−X)', -18.5, 8], ['В (+X)', 34.5, 8]]) {
+      const l = label(txt, '#ffc94d'); l.position.set(x, 1, z); axes.add(l);
+    }
+  }
+  axes.position.y = chunks.position.y;
+  axes.visible = tool.chunks !== false;
+  ev.root.add(axes);
 }
 // рамка под мышкой: куда встанет блок / что выкопается / что сотрётся (с углом — весь прямоугольник)
 let hoverBox = null;
@@ -207,7 +236,7 @@ function panel() {
   if (t === 'slab') opts.push(`<label class="chk"><input type="checkbox" id="edTop"${tool.top ? ' checked' : ''}>верхняя половина</label>`);
   if (t === 'water') opts.push(`<label class="erow">Вода <select id="edW">${[['src', 'источник (ведро)'], ...['n', 's', 'e', 'w'].map(d => [d, 'течёт на ' + DIRN[d]])].map(([v, n]) => `<option value="${v}"${tool.water === v ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`);
   if (t === 'lamp' || t === 'lever' || t === 'powered_rail') opts.push(`<label class="chk"><input type="checkbox" id="edOn"${tool.on ? ' checked' : ''}>включён</label>`);
-  if (t === 'rail' || t === 'powered_rail') opts.push(`<label class="erow">Вдоль <select id="edAx"><option value="x"${tool.axis === 'x' ? ' selected' : ''}>запад–восток</option><option value="z"${tool.axis === 'z' ? ' selected' : ''}>север–юг</option></select></label>`);
+  if (t === 'rail' || t === 'powered_rail') opts.push(`<label class="erow">Вдоль <select id="edAx"><option value="x"${tool.axis === 'x' ? ' selected' : ''}>запад–восток (ось X)</option><option value="z"${tool.axis === 'z' ? ' selected' : ''}>север–юг (ось Z)</option></select></label>`);
   const c = count(), name = MOBS.includes(t) ? ENTS[t].n : BLOCKS[t]?.n || t;
   P.innerHTML = `
     <div class="emodes" role="group" aria-label="Что делает клик">
@@ -223,7 +252,7 @@ function panel() {
     <label class="erow">Название шага <input id="edStepT" value="${esc(step().t)}"></label>
     ${S.steps.length > 1 ? '<button class="linkbtn" id="edDelStep">Удалить шаг</button>' : ''}
     <h4>Чанки</h4>
-    <label class="chk"><input type="checkbox" id="edChunks"${tool.chunks !== false ? ' checked' : ''}>показать границы (синие линии)</label>
+    <label class="chk"><input type="checkbox" id="edChunks"${tool.chunks !== false ? ' checked' : ''}>показать границы и оси</label>
     <p class="ehint">Подсвечен средний чанк: x и z от 0 до 15, крестик — его центр. Строй ферму в нём. В игре F3+G рисует границы чанков, а в F3 строка <b>Chunk</b> начинается с места внутри чанка (x, y, z от 0 до 15) — ставь блоки по тем же числам, что тут.</p>
     <h4>Срез</h4>
     <div class="erow"><button class="btn sm" id="edCutDn">▼</button><span id="edCutL">${cut === null ? 'всё видно' : 'до y=' + cut}</span><button class="btn sm" id="edCutUp">▲</button><label class="chk"><input type="checkbox" id="edSolo"${solo ? ' checked' : ''}>один слой</label></div>
