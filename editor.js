@@ -24,8 +24,9 @@ const OPP = { '1,0,0': 'w', '-1,0,0': 'e', '0,0,1': 'n', '0,0,-1': 's' };
 
 const blank = () => ({ title: 'Моя схема', steps: [{ t: 'Шаг 1', put: [], dig: [], ents: [] }], cur: 0 });
 let S = load('editor', null) || blank();
-let tool = load('editorTool', { t: 'cobble', mode: 'place', f: 'n', water: 'src', top: false, open: false, on: false, axis: 'x' });
+let tool = { t: 'cobble', mode: 'place', f: 'n', water: 'src', top: false, open: false, on: false, axis: 'x', depth: 1, rect: false, ...load('editorTool', {}) };
 let ev = null, undo = [], booted = false, cut = null, solo = false, shift = false;
+let corner = null, hoverAt = null; // corner — первый угол прямоугольника; hoverAt — клетка под мышкой (для «F»)
 
 function persist() { save('editor', S); save('editorTool', tool); }
 function snapshot() { undo.push(JSON.stringify(S)); if (undo.length > 60) undo.shift(); }
@@ -54,7 +55,7 @@ function makeThumbs(keys) {
 function asFarm() {
   return {
     id: 'editor', title: S.title, short: '', badges: [], stats: [],
-    ground: { box: [-12, -8, -12, 12, -1, 12], top: -1, dirt: 3, mode: 'solid' },
+    ground: { box: [-14, -16, -14, 14, -1, 14], top: -1, dirt: 3, mode: 'solid' },
     view: { dir: [-.8, 1, 1.1], zoom: .7 },
     steps: S.steps.map((s, i) => ({ t: s.t || `Шаг ${i + 1}`, d: '', put: s.put, dig: s.dig.map(c => [...c]), ents: s.ents })),
   };
@@ -97,28 +98,52 @@ function onPick(p) {
   if (mode === 'erase') {
     if (p.ent) { for (const st of S.steps) { const j = st.ents.findIndex(e => e.id === p.ent.id); if (j >= 0) { snapshot(); st.ents.splice(j, 1); return rebuild(); } } }
     if (p.en) { const f = findPut(p.en.x, p.en.y, p.en.z); if (f) { snapshot(); S.steps[f[0]].put.splice(f[1], 1); return rebuild(); } }
-    if (p.ground) return;
+    // клик по стенке ямы — засыпать выкопанную клетку перед этой стенкой
+    if (p.ground && p.n) {
+      const k = cellKey([p.ground[0] + p.n[0], p.ground[1] + p.n[1], p.ground[2] + p.n[2]]);
+      for (const st of S.steps) { const j = st.dig.findIndex(c => cellKey(c) === k); if (j >= 0) { snapshot(); st.dig.splice(j, 1); return rebuild(); } }
+    }
     return;
   }
   if (mode === 'dig') {
     if (!p.ground) return;
-    const k = cellKey(p.ground);
-    if (S.steps.some(st => st.dig.some(c => cellKey(c) === k))) return;
-    snapshot(); s.dig.push(p.ground); return rebuild();
+    if (tool.rect && !corner) { corner = p.ground; return hint(); }
+    const a = corner || p.ground, b = p.ground, top = Math.max(a[1], b[1]), d = Math.max(1, tool.depth | 0);
+    corner = null;
+    const dug = new Set(); for (const st of S.steps) for (const c of st.dig) dug.add(cellKey(c));
+    const add = [];
+    for (let x = Math.min(a[0], b[0]); x <= Math.max(a[0], b[0]); x++)
+      for (let z = Math.min(a[2], b[2]); z <= Math.max(a[2], b[2]); z++)
+        for (let y = top; y > top - d && y >= -16; y--) { const c = [x, y, z]; if (!dug.has(cellKey(c))) add.push(c); }
+    if (!add.length) return hint();
+    snapshot(); s.dig.push(...add); return rebuild();
   }
   // поставить: к грани, по которой кликнули
   const base = p.en ? [p.en.x, p.en.y, p.en.z] : p.ground;
   if (!base || !p.n) return;
   const c = [base[0] + p.n[0], base[1] + p.n[1], base[2] + p.n[2]];
-  snapshot();
   if (MOBS.includes(tool.t)) {
+    snapshot();
     s.ents.push({ id: 'm' + Date.now().toString(36), e: tool.t, x: c[0] + .5, y: c[1], z: c[2] + .5, yaw: { n: 0, s: Math.PI, e: -Math.PI / 2, w: Math.PI / 2 }[tool.f] || 0 });
-  } else {
-    const f = findPut(...c); if (f && f[0] === S.cur) s.put.splice(f[1], 1);
-    const pr = propsFor(tool.t, p.n);
-    s.put.push(pr ? [tool.t, ...c, pr] : [tool.t, ...c]);
+    return rebuild();
   }
+  if (tool.rect && !corner) { corner = c; return hint(); }
+  const a = corner || c; corner = null;
+  snapshot();
+  const pr = propsFor(tool.t, p.n);
+  for (let x = Math.min(a[0], c[0]); x <= Math.max(a[0], c[0]); x++)
+    for (let y = Math.min(a[1], c[1]); y <= Math.max(a[1], c[1]); y++)
+      for (let z = Math.min(a[2], c[2]); z <= Math.max(a[2], c[2]); z++) {
+        const f = findPut(x, y, z); if (f && f[0] === S.cur) s.put.splice(f[1], 1);
+        s.put.push(pr ? [tool.t, x, y, z, { ...pr }] : [tool.t, x, y, z]);
+      }
   rebuild();
+}
+// подсказка внизу панели: что сейчас ждёт клик
+function hint() {
+  const el = $('#edHover'); if (!el) return;
+  el.textContent = corner ? `Первый угол: x ${corner[0]} · y ${corner[1]} · z ${corner[2]}. Кликни второй угол (Esc — отмена).`
+    : 'Клик по земле или грани блока — поставить. Shift+клик — стереть. Ctrl+Z — отменить.';
 }
 
 /* ---------- панель ---------- */
@@ -143,8 +168,9 @@ function panel() {
       <button data-mode="dig" aria-pressed="${tool.mode === 'dig'}">⛏ Копать</button>
       <button data-mode="erase" aria-pressed="${tool.mode === 'erase'}">✖ Стереть</button>
     </div>
-    <div class="ecur">${thumbs.get(t) ? `<img src="${thumbs.get(t)}" alt="">` : ''}<b>${esc(name)}</b></div>
-    ${opts.join('')}
+    ${tool.mode === 'dig' ? `<label class="erow">Вглубь <select id="edDepth">${[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16].map(n => `<option value="${n}"${tool.depth === n ? ' selected' : ''}>${n} бл.</option>`).join('')}</select></label>`
+      : `<div class="ecur">${thumbs.get(t) ? `<img src="${thumbs.get(t)}" alt="">` : ''}<b>${esc(name)}</b></div>${opts.join('')}`}
+    ${tool.mode !== 'erase' ? `<label class="chk"><input type="checkbox" id="edRect"${tool.rect ? ' checked' : ''}>прямоугольником (2 клика по углам)</label>` : '<p class="ehint">Клик по стенке ямы — засыпать клетку.</p>'}
     <h4>Шаги</h4>
     <div class="esteps">${S.steps.map((s, i) => `<button data-step="${i}" aria-pressed="${i === S.cur}">${i + 1}</button>`).join('')}<button id="edAddStep" title="Новый шаг">＋</button></div>
     <label class="erow">Название шага <input id="edStepT" value="${esc(step().t)}"></label>
@@ -159,7 +185,9 @@ function panel() {
       <button class="linkbtn" id="edClear">Начать заново</button>
     </div>
     <textarea id="edText" hidden rows="5" placeholder="Сюда вставь текст схемы и нажми «Вставить схему» ещё раз"></textarea>
-    <p class="ehint" id="edHover">Клик по земле или грани блока — поставить. Shift+клик — стереть. Ctrl+Z — отменить.</p>`;
+    <p class="ehint" id="edHover"></p>
+    <p class="ehint">Камера: колесо — к мышке, правая кнопка — сдвиг, F — к клетке под мышкой, Q/E — ниже/выше на блок.</p>`;
+  hint();
 }
 function palette() {
   const B = Object.entries(BLOCKS).filter(([k]) => !SKIP.has(k));
@@ -189,9 +217,15 @@ export function showEditor(on) {
     try {
       ev = window.__ev = new Viewer($('#edView'), {
         onPick: p => onPick(p),
-        onHover: h => { const el = $('#edHover'); if (!el || !h) return; const c = h.en ? [h.en.x, h.en.y, h.en.z] : h.ground; if (c) el.textContent = `x ${c[0]} · y ${c[1]} · z ${c[2]}${h.en ? ' — ' + (BLOCKS[h.en.t]?.n || h.en.t) : ' — земля'}`; },
+        onHover: h => {
+          const el = $('#edHover'); if (!el || !h) return; const c = h.en ? [h.en.x, h.en.y, h.en.z] : h.ground; if (!c) return;
+          hoverAt = c;
+          el.textContent = (corner ? `Угол x ${corner[0]} · y ${corner[1]} · z ${corner[2]} → ` : '') + `x ${c[0]} · y ${c[1]} · z ${c[2]}${h.en ? ' — ' + (BLOCKS[h.en.t]?.n || h.en.t) : ' — земля'}`;
+        },
       });
     } catch { $('#edView').textContent = 'Без 3D (WebGL) редактор не работает.'; return; }
+    // колесо приближает к мышке, а не к центру — можно залезть в яму; близко подлетать можно
+    ev.controls.zoomToCursor = true; ev.controls.minDistance = 1.5;
     // Shift+клик — стереть, не переключая режим
     $('#edView').addEventListener('pointerdown', e => { shift = e.shiftKey; }, true);
     events();
@@ -204,7 +238,7 @@ function events() {
   sec.addEventListener('click', e => {
     const t = e.target.closest('button'); if (!t) return;
     if (t.dataset.t) { tool.t = t.dataset.t; sec.querySelectorAll('.eitem').forEach(b => b.setAttribute('aria-pressed', b === t)); if (tool.mode !== 'place') tool.mode = 'place'; panel(); persist(); return; }
-    if (t.dataset.mode) { tool.mode = t.dataset.mode; panel(); persist(); return; }
+    if (t.dataset.mode) { tool.mode = t.dataset.mode; corner = null; panel(); persist(); return; }
     if (t.dataset.step) { S.cur = +t.dataset.step; rebuild(); return; }
     switch (t.id) {
       case 'edAddStep': snapshot(); S.steps.push({ t: `Шаг ${S.steps.length + 1}`, put: [], dig: [], ents: [] }); S.cur = S.steps.length - 1; return rebuild();
@@ -242,6 +276,8 @@ function events() {
     else if (id === 'edW') tool.water = e.target.value;
     else if (id === 'edOn') tool.on = e.target.checked;
     else if (id === 'edAx') tool.axis = e.target.value;
+    else if (id === 'edDepth') tool.depth = +e.target.value;
+    else if (id === 'edRect') { tool.rect = e.target.checked; corner = null; hint(); }
     else if (id === 'edSolo') { solo = e.target.checked; if (solo && cut === null) cut = 0; return rebuild(); }
     else if (id === 'edStepT') { step().t = e.target.value; }
     else if (id === 'edTitle') { S.title = e.target.value; }
@@ -255,6 +291,18 @@ function events() {
   addEventListener('keydown', e => {
     if ($('#v-editor').hidden || e.target.closest?.('input, textarea, select')) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (undo.length) { S = JSON.parse(undo.pop()); rebuild(); } }
+    if (e.key === 'Escape' && corner) { corner = null; hint(); }
+    const k = e.key.toLowerCase();
+    // F — навести камеру на клетку под мышкой; Q/E — опустить/поднять камеру на блок (лезть в яму)
+    if ((k === 'f' || k === 'а') && hoverAt && ev) {
+      const t = new THREE.Vector3(hoverAt[0] + .5, hoverAt[1] + .5, hoverAt[2] + .5);
+      const off = ev.camera.position.clone().sub(ev.controls.target).setLength(7);
+      ev.tween = null; ev.controls.target.copy(t); ev.camera.position.copy(t).add(off); ev.dirty = true;
+    }
+    if (ev && (k === 'q' || k === 'й' || k === 'e' || k === 'у')) {
+      const dy = k === 'q' || k === 'й' ? -1 : 1;
+      ev.tween = null; ev.controls.target.y += dy; ev.camera.position.y += dy; ev.dirty = true;
+    }
     if (e.key === 'r' || e.key === 'к') { const d = FACING[tool.t] || F4; tool.f = d[(d.indexOf(tool.f) + 1) % d.length]; panel(); persist(); }
   });
 }

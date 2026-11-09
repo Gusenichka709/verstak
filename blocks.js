@@ -577,7 +577,7 @@ function comparatorModel(f) {
 }
 // каменная стенка (ограда): столбик и перемычки к соседним стенкам и цельным блокам
 function wallModel(e, w) {
-  const m = mat('stone_bricks'), g = grp(bx(.5, 1, .5, .5, .5, .5, m));
+  const m = mat('cobble'), g = grp(bx(.5, 1, .5, .5, .5, .5, m));
   for (const [d, dx, dz] of [['n', 0, -1], ['s', 0, 1], ['e', 1, 0], ['w', -1, 0]]) {
     const nb = w.at?.(e.x + dx, e.y, e.z + dz);
     if (!nb || !(nb.t === 'wall' || ['cobble', 'stone', 'dirt', 'grass', 'planks', 'glass', 'stone_bricks', 'path'].includes(nb.t))) continue;
@@ -724,7 +724,7 @@ export const BLOCKS = {
   sticky_piston: { n: 'Липкий поршень (поршень + слизь)', cat: 'r', build: e => pistonModel(e.p.f, true) },
   redstone_block: { n: 'Блок редстоуна', cat: 'r', build: () => cube('redstone_block') },
   slab: { n: 'Плита (верхняя половина)', cat: 'b', build: e => bx(1, .5, 1, .5, e.p.top ? .75 : .25, .5, mat('cobble')) },
-  wall: { n: 'Каменная стенка (ограда)', cat: 'b', build: (e, w) => wallModel(e, w) },
+  wall: { n: 'Каменный забор (стенка)', cat: 'b', build: (e, w) => wallModel(e, w) },
   trapdoor: { n: 'Люк', cat: 'm', build: e => trapdoorModel(e.p) },
   path: { n: 'Тропинка (дёрн + лопата)', cat: 'b', build: () => bx(1, .9375, 1, .5, .46875, .5, six(mat('path_top'), mat('path_side'), mat('dirt'))) },
   stone_bricks: { n: 'Каменные кирпичи', cat: 'b', build: () => cube('stone_bricks') },
