@@ -64,8 +64,11 @@ function rebuild(keepCam = true) {
   if (!ev) return;
   const cp = ev.camera.position.clone(), ct = ev.controls.target.clone();
   ev.setFarm(asFarm());
-  ev.set({ ground: 'solid', layer: cut !== null && solo, solo, cut, demo: false, highlight: true });
+  ev.set({ ground: 'solid', layer: false, solo: false, cut: null, demo: false, highlight: true });
   ev.goto(S.cur + 1, { animate: false });
+  // срез ставим после goto: goto сам подгоняет срез под шаг и сбросил бы наш
+  ev.set({ layer: cut !== null && solo, solo, cut }); ev.buildHighlights();
+  if (hoverBox) { ev.root.add(hoverBox); hoverBox.visible = false; }
   if (keepCam && booted) { ev.tween = null; ev.camera.position.copy(cp); ev.controls.target.copy(ct); ev.camera.lookAt(ct); ev.dirty = true; }
   booted = true;
   panel(); persist();
@@ -139,6 +142,29 @@ function onPick(p) {
       }
   rebuild();
 }
+// рамка под мышкой: куда встанет блок / что выкопается / что сотрётся (с углом — весь прямоугольник)
+let hoverBox = null;
+function showHover(h) {
+  if (!ev) return;
+  if (!hoverBox) {
+    hoverBox = new THREE.LineSegments(ev.edgeGeo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: .95, depthTest: false }));
+    hoverBox.renderOrder = 10; ev.root.add(hoverBox);
+  }
+  const mode = shift ? 'erase' : tool.mode;
+  let c = null;
+  if (h && mode === 'erase') c = h.en ? [h.en.x, h.en.y, h.en.z] : null;
+  else if (h && mode === 'dig') c = h.ground || null;
+  else if (h && (h.en || h.ground) && h.n) { const b = h.en ? [h.en.x, h.en.y, h.en.z] : h.ground; c = [b[0] + h.n[0], b[1] + h.n[1], b[2] + h.n[2]]; }
+  hoverBox.visible = !!c;
+  if (c) {
+    const a = corner && mode !== 'erase' ? corner : c;
+    const lo = [0, 1, 2].map(i => Math.min(a[i], c[i])), hi = [0, 1, 2].map(i => Math.max(a[i], c[i]));
+    if (mode === 'dig') lo[1] = Math.max(-16, hi[1] - Math.max(1, tool.depth | 0) + 1);
+    hoverBox.scale.set(hi[0] - lo[0] + 1.04, hi[1] - lo[1] + 1.04, hi[2] - lo[2] + 1.04);
+    hoverBox.position.set((lo[0] + hi[0] + 1) / 2, (lo[1] + hi[1] + 1) / 2, (lo[2] + hi[2] + 1) / 2);
+  }
+  ev.dirty = true;
+}
 // подсказка внизу панели: что сейчас ждёт клик
 function hint() {
   const el = $('#edHover'); if (!el) return;
@@ -193,10 +219,13 @@ function palette() {
   const B = Object.entries(BLOCKS).filter(([k]) => !SKIP.has(k));
   const sec = GROUPS.map(([cat, name]) => {
     const items = B.filter(([, d]) => d.cat === cat);
-    return items.length ? `<h5>${name}</h5><div class="egrid">${items.map(([k, d]) => item(k, d.n)).join('')}</div>` : '';
-  }).join('') + `<h5>Мобы и предметы</h5><div class="egrid">${MOBS.map(k => item(k, ENTS[k].n)).join('')}</div>`;
+    return items.length ? grp(cat, name, items.map(([k, d]) => item(k, d.n)).join('')) : '';
+  }).join('') + grp('mob', 'Мобы и предметы', MOBS.map(k => item(k, ENTS[k].n)).join(''));
   $('#edPal').innerHTML = `<input id="edFind" type="search" placeholder="Найти блок…" aria-label="Найти блок">${sec}`;
 }
+// раздел палитры сворачивается; свёрнутые запоминаем
+const shut = new Set(load('editorShut', []));
+const grp = (id, name, html) => `<details class="egrp" data-g="${id}"${shut.has(id) ? '' : ' open'}><summary>${name}</summary><div class="egrid">${html}</div></details>`;
 const item = (k, n) => `<button class="eitem" data-t="${k}" title="${esc(n)}" aria-pressed="${tool.t === k}">${thumbs.get(k) ? `<img src="${thumbs.get(k)}" alt="">` : ''}<span>${esc(n.replace(/\s*\(.*\)/, ''))}</span></button>`;
 
 /* ---------- запуск и события ---------- */
@@ -218,6 +247,7 @@ export function showEditor(on) {
       ev = window.__ev = new Viewer($('#edView'), {
         onPick: p => onPick(p),
         onHover: h => {
+          showHover(h);
           const el = $('#edHover'); if (!el || !h) return; const c = h.en ? [h.en.x, h.en.y, h.en.z] : h.ground; if (!c) return;
           hoverAt = c;
           el.textContent = (corner ? `Угол x ${corner[0]} · y ${corner[1]} · z ${corner[2]} → ` : '') + `x ${c[0]} · y ${c[1]} · z ${c[2]}${h.en ? ' — ' + (BLOCKS[h.en.t]?.n || h.en.t) : ' — земля'}`;
@@ -244,7 +274,7 @@ function events() {
       case 'edAddStep': snapshot(); S.steps.push({ t: `Шаг ${S.steps.length + 1}`, put: [], dig: [], ents: [] }); S.cur = S.steps.length - 1; return rebuild();
       case 'edDelStep': snapshot(); S.steps.splice(S.cur, 1); S.cur = Math.max(0, S.cur - 1); return rebuild();
       case 'edUndo': if (undo.length) { S = JSON.parse(undo.pop()); rebuild(); } return;
-      case 'edCutDn': cut = cut === null ? 2 : cut - 1; return rebuild();
+      case 'edCutDn': cut = cut === null ? Math.max(-1, ...S.steps.flatMap(s => s.put.map(e => e[2]))) - 1 : Math.max(-16, cut - 1); return rebuild();
       case 'edCutUp': cut = cut === null ? null : cut + 1 > 12 ? null : cut + 1; return rebuild();
       case 'edCopy': {
         const txt = JSON.stringify({ v: 1, title: S.title, steps: S.steps });
@@ -283,10 +313,16 @@ function events() {
     else if (id === 'edTitle') { S.title = e.target.value; }
     persist();
   });
+  sec.addEventListener('toggle', e => {
+    const d = e.target; if (!d.classList?.contains('egrp') || $('#edFind')?.value.trim()) return;
+    d.open ? shut.delete(d.dataset.g) : shut.add(d.dataset.g); save('editorShut', [...shut]);
+  }, true);
   sec.addEventListener('input', e => {
     if (e.target.id !== 'edFind') return;
     const q = e.target.value.trim().toLowerCase();
     sec.querySelectorAll('.eitem').forEach(b => { b.hidden = !!q && !b.title.toLowerCase().includes(q); });
+    // при поиске раскрываем разделы, где что-то нашлось
+    sec.querySelectorAll('.egrp').forEach(d => { if (q) d.open = [...d.querySelectorAll('.eitem')].some(b => !b.hidden); else d.open = !shut.has(d.dataset.g); });
   });
   addEventListener('keydown', e => {
     if ($('#v-editor').hidden || e.target.closest?.('input, textarea, select')) return;

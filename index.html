@@ -96,7 +96,8 @@ main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .ewrap { display: grid; grid-template-columns: 220px minmax(0, 1fr) 260px; gap: 12px; align-items: start; }
 .epal, .epanel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; max-height: 72vh; overflow: auto; }
 .epal input[type=search] { width: 100%; margin-bottom: 6px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); color: var(--ink); }
-.epal h5 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.epal summary { margin: 10px 0 4px; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; cursor: pointer; user-select: none; }
+.epal summary:hover { color: var(--ink); }
 .egrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
 .eitem { display: flex; align-items: center; gap: 4px; padding: 3px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--ink); font-size: 11px; text-align: left; cursor: pointer; line-height: 1.15; }
 .eitem img { width: 28px; height: 28px; flex: none; }
