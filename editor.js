@@ -55,7 +55,7 @@ function makeThumbs(keys) {
 function asFarm() {
   return {
     id: 'editor', title: S.title, short: '', badges: [], stats: [],
-    ground: { box: [-14, -16, -14, 14, -1, 14], top: -1, dirt: 3, mode: 'solid' },
+    ground: { box: [-16, -16, -16, 31, -1, 31], top: -1, dirt: 3, mode: 'solid' },
     view: { dir: [-.8, 1, 1.1], zoom: .7 },
     steps: S.steps.map((s, i) => ({ t: s.t || `Шаг ${i + 1}`, d: '', put: s.put, dig: s.dig.map(c => [...c]), ents: s.ents })),
   };
@@ -69,6 +69,7 @@ function rebuild(keepCam = true) {
   // срез ставим после goto: goto сам подгоняет срез под шаг и сбросил бы наш
   ev.set({ layer: cut !== null && solo, solo, cut }); ev.buildHighlights();
   if (hoverBox) { ev.root.add(hoverBox); hoverBox.visible = false; }
+  chunkGrid();
   if (keepCam && booted) { ev.tween = null; ev.camera.position.copy(cp); ev.controls.target.copy(ct); ev.camera.lookAt(ct); ev.dirty = true; }
   booted = true;
   panel(); persist();
@@ -142,6 +143,26 @@ function onPick(p) {
       }
   rebuild();
 }
+// разметка чанков: поле — 3×3 чанка, средний (x и z от 0 до 15) подсвечен — в нём и строй
+const CH = c => Math.floor(c / 16), IN = c => ((c % 16) + 16) % 16;
+let chunks = null;
+function chunkGrid() {
+  if (!chunks) {
+    chunks = new THREE.Group();
+    const pts = [];
+    for (let i = -16; i <= 32; i += 16) pts.push(i, 0, -16, i, 0, 32, -16, 0, i, 32, 0, i);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    chunks.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x4da3ff, transparent: true, opacity: .9 })));
+    const fill = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), new THREE.MeshBasicMaterial({ color: 0x4da3ff, transparent: true, opacity: .12, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    fill.rotation.x = -Math.PI / 2; fill.position.set(8, 0, 8); chunks.add(fill);
+    // центр чанка — крестик
+    const cg = new THREE.BufferGeometry(); cg.setAttribute('position', new THREE.Float32BufferAttribute([7.5, 0, 8, 8.5, 0, 8, 8, 0, 7.5, 8, 0, 8.5], 3));
+    chunks.add(new THREE.LineSegments(cg, new THREE.LineBasicMaterial({ color: 0xffc94d })));
+  }
+  chunks.visible = tool.chunks !== false;
+  chunks.position.y = (cut !== null && cut < -1 ? cut + 1 : 0) + .02; // сетка лежит на верху грунта (и на срезе)
+  ev.root.add(chunks); ev.dirty = true;
+}
 // рамка под мышкой: куда встанет блок / что выкопается / что сотрётся (с углом — весь прямоугольник)
 let hoverBox = null;
 function showHover(h) {
@@ -201,6 +222,9 @@ function panel() {
     <div class="esteps">${S.steps.map((s, i) => `<button data-step="${i}" aria-pressed="${i === S.cur}">${i + 1}</button>`).join('')}<button id="edAddStep" title="Новый шаг">＋</button></div>
     <label class="erow">Название шага <input id="edStepT" value="${esc(step().t)}"></label>
     ${S.steps.length > 1 ? '<button class="linkbtn" id="edDelStep">Удалить шаг</button>' : ''}
+    <h4>Чанки</h4>
+    <label class="chk"><input type="checkbox" id="edChunks"${tool.chunks !== false ? ' checked' : ''}>показать границы (синие линии)</label>
+    <p class="ehint">Подсвечен средний чанк: x и z от 0 до 15, крестик — его центр. Строй ферму в нём. В игре F3+G рисует границы чанков, а в F3 строка <b>Chunk</b> начинается с места внутри чанка (x, y, z от 0 до 15) — ставь блоки по тем же числам, что тут.</p>
     <h4>Срез</h4>
     <div class="erow"><button class="btn sm" id="edCutDn">▼</button><span id="edCutL">${cut === null ? 'всё видно' : 'до y=' + cut}</span><button class="btn sm" id="edCutUp">▲</button><label class="chk"><input type="checkbox" id="edSolo"${solo ? ' checked' : ''}>один слой</label></div>
     <p class="ehint">Блоков ${c.b} · выкопано ${c.d} · мобов ${c.m}</p>
@@ -250,7 +274,8 @@ export function showEditor(on) {
           showHover(h);
           const el = $('#edHover'); if (!el || !h) return; const c = h.en ? [h.en.x, h.en.y, h.en.z] : h.ground; if (!c) return;
           hoverAt = c;
-          el.textContent = (corner ? `Угол x ${corner[0]} · y ${corner[1]} · z ${corner[2]} → ` : '') + `x ${c[0]} · y ${c[1]} · z ${c[2]}${h.en ? ' — ' + (BLOCKS[h.en.t]?.n || h.en.t) : ' — земля'}`;
+          const ch = ` · в чанке ${IN(c[0])}, ${IN(c[2])}${CH(c[0]) || CH(c[2]) ? ' (соседнем!)' : ''}`;
+          el.textContent = (corner ? `Угол x ${corner[0]} · y ${corner[1]} · z ${corner[2]} → ` : '') + `x ${c[0]} · y ${c[1]} · z ${c[2]}${ch}${h.en ? ' — ' + (BLOCKS[h.en.t]?.n || h.en.t) : ' — земля'}`;
         },
       });
     } catch { $('#edView').textContent = 'Без 3D (WebGL) редактор не работает.'; return; }
@@ -307,6 +332,7 @@ function events() {
     else if (id === 'edOn') tool.on = e.target.checked;
     else if (id === 'edAx') tool.axis = e.target.value;
     else if (id === 'edDepth') tool.depth = +e.target.value;
+    else if (id === 'edChunks') { tool.chunks = e.target.checked; chunkGrid(); }
     else if (id === 'edRect') { tool.rect = e.target.checked; corner = null; hint(); }
     else if (id === 'edSolo') { solo = e.target.checked; if (solo && cut === null) cut = 0; return rebuild(); }
     else if (id === 'edStepT') { step().t = e.target.value; }
