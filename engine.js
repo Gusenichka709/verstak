@@ -61,8 +61,8 @@ const wobble = (b, k = 4.5, f = 2.5) => Math.exp(-k * b) * Math.cos(b * Math.PI 
 // как блок появляется: плоское и мелкое выпрыгивает, жидкость наливается, остальное падает сверху
 const POP = new Set(['torch', 'sign', 'ladder', 'dust', 'lever', 'rail', 'powered_rail', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling', 'button', 'repeater', 'comparator', 'rtorch', 'mark', 'iron_door']);
 const FILL = new Set(['water', 'lava']);
-const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35 };
-const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42 }; // доля времени, когда «приземлился»: пыль и рамка
+const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35, morph: .32 };
+const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42, morph: .05 }; // доля времени, когда «приземлился»: пыль и рамка
 const LEAVE = new Set(['out', 'entOut']);
 // Пыль соединяется с пылью рядом, ступенькой вверх (если над собой пусто) и вниз (если над нижней пусто) —
 // поэтому под цельным блоком провод проходит, не касаясь провода сверху («мостик»).
@@ -361,7 +361,12 @@ export class Viewer {
       const gap = Math.min(.08, 1.6 / fresh.length), t0 = digEnd ? digEnd + .1 : now + .05;
       // пыль при установке: у больших шагов не у каждого блока, чтобы не рябило
       const every = Math.max(1, Math.ceil(fresh.length / 18));
-      fresh.forEach((m, i) => { const kind = kindOf(m.userData.en); this.addAnim(m, kind, t0 + i * gap, { dust: kind === 'drop' && i % every === 0 }); });
+      const shov = new Map(this.digs.filter(d => d.shovel).map(d => [K(d.x, d.y, d.z), d]));
+      fresh.forEach((m, i) => {
+        const en = m.userData.en, sd = en.t === 'path' && shov.get(K(en.x, en.y, en.z));
+        if (sd) { sd.tb = t0 + i * gap; this.addAnim(m, 'morph', sd.tb); return; } // дёрн → тропинка в тот же миг
+        const kind = kindOf(en); this.addAnim(m, kind, t0 + i * gap, { dust: kind === 'drop' && i % every === 0 });
+      });
       end = t0 + (fresh.length - 1) * gap + DUR.fill;
     }
     if (entsIn.length) {
@@ -448,6 +453,7 @@ export class Viewer {
         break;
       }
       case 'pop': { const s = Math.max(1e-4, outBack(v, 2.6)); this.place(m, s, s, s, 0, .5); break; }
+      case 'morph': { const w = wobble(v); this.place(m, 1 + .05 * w, 1 - .1 * w, 1 + .05 * w, 0); break; }
       case 'fill': { const s = .04 + .96 * outCubic(v); this.place(m, 1, s, 1, 0); break; }
       case 'out': { const s = Math.max(1e-4, 1 - v * v); this.place(m, s, s, s, .7 * outCubic(v), .5); break; }
       case 'entIn': {
@@ -522,24 +528,28 @@ export class Viewer {
     // клетки, где в этом шаге пропадает грунт: выкопанные и те, что заменяются новым блоком
     const s = this.farm.steps[k - 1], G = this.farm.ground; if (!G || this.opt.ground === 'off') return [];
     const cut = this.opt.cut, seen = new Set(), cells = [];
-    const take = (x, y, z, ord) => {
+    const take = (x, y, z, ord, shovel) => {
       const key = K(x, y, z); if (seen.has(key)) return; seen.add(key);
       if (cut !== null && y > cut) return;
-      if (this.groundAt(x, y, z, k - 1) && !this.groundAt(x, y, z, k)) cells.push([x, y, z, ord]);
+      if (this.groundAt(x, y, z, k - 1) && !this.groundAt(x, y, z, k)) cells.push([x, y, z, ord, shovel]);
     };
     (s.dig || []).forEach((b, i) => boxCells(b).forEach(([x, y, z]) => take(x, y, z, i)));
-    for (const en of this.entries) if (en.step === k) en.cells.forEach(([x, y, z]) => take(x, y, z, 99));
+    // тропинка на месте дёрна — не ломаем: дёрн превращается в неё «лопатой» (см. startDig, morph)
+    for (const en of this.entries) if (en.step === k) en.cells.forEach(([x, y, z]) => take(x, y, z, 99, en.t === 'path' && y === G.top));
     return cells.sort((a, b) => b[1] - a[1] || a[3] - b[3] || a[0] - b[0] || a[2] - b[2]); // сверху вниз, как копаешь
   }
   startDig(k, t0) {
     const G = this.farm.ground, cells = this.digCells(k);
     if (!cells.length) return 0;
     // мало блоков — копаем почти по одному, много — быстрее, чтобы шаг не тянулся
-    const gap = Math.min(.18, Math.max(.04, 3 / cells.length)), glass = this.opt.ground === 'glass';
+    const real = cells.filter(c => !c[4]).length;
+    const gap = Math.min(.18, Math.max(.04, 3 / Math.max(1, real))), glass = this.opt.ground === 'glass';
     const byKind = {};
-    this.digs = cells.map(([x, y, z], i) => {
+    let r = 0;
+    this.digs = cells.map(([x, y, z, , shovel], i) => {
       const kind = y === G.top ? 'grass' : y >= G.top - (G.dirt ?? 3) ? 'dirt' : 'stone';
-      const d = { x, y, z, i, kind, tb: t0 + CRACK_T + i * gap, st: -1, hit: 0, seed: i * 1.7, broken: false, obj: null };
+      // дёрн под тропинку стоит, пока на его место не встанет тропинка (время ставит goto)
+      const d = { x, y, z, i, kind, shovel, tb: shovel ? Infinity : t0 + CRACK_T + r++ * gap, st: -1, hit: 0, seed: i * 1.7, broken: false, obj: null };
       (byKind[kind] ||= []).push(d);
       return d;
     });
@@ -556,7 +566,7 @@ export class Viewer {
     const eg = new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     this.digEdges = new THREE.LineSegments(eg, this.digCellMat); this.digEdges.userData.src = pos.slice(); this.digEdges.userData.n = n;
     this.digRoot.add(this.digEdges);
-    return t0 + CRACK_T + (cells.length - 1) * gap + .25;
+    return real ? t0 + CRACK_T + (real - 1) * gap + .25 : 0;
   }
   // показать или убрать клетку грунта в пачке (и её рамку)
   digCell(d, on) {
@@ -1177,6 +1187,7 @@ export class Viewer {
     // копание: по блоку бьют киркой — трещина растёт, блок вздрагивает от ударов, потом лопается крошками
     for (const d of this.digs) {
       if (d.broken) continue;
+      if (d.shovel) { if (t >= d.tb) { this.digBreak(d, false); if (t - d.tb < .3) this.chips(d, 3, .25, .3); busy = true; } continue; }
       // если кадры долго не шли, просроченные клетки просто исчезают, без лавины крошек
       if (t >= d.tb) { this.digBreak(d, t - d.tb < .3); busy = true; continue; }
       if (t < d.tb - CRACK_T) continue;
