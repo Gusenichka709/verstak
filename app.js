@@ -689,7 +689,7 @@ function stopPlay(done) {
   setTimeout(() => { if (!playing) b.style.setProperty('--p', 0); }, 300);
 }
 // следующий шаг — когда докопали и достроили текущий
-const playWait = () => Math.max(2200, viewer.animLeft() * 1000 + 1100);
+const playWait = () => Math.max(2200 / viewer.speed, (viewer.animLeft() * 1000 + 1100) / viewer.speed);
 function playArm(ms) { playing.due = performance.now() + ms; playing.timer = setTimeout(playTick, ms); }
 function playTick() {
   if (viewer.k >= farm.steps.length) return stopPlay(true);
@@ -707,9 +707,9 @@ function pausePlay(on) {
 // после ручного «по одному блоку» достраиваем шаг блок за блоком, потом — дальше по шагам
 function playBlocks() {
   const sc = $('#bScrub'), n = viewer.seqLen(), i = viewer.progress();
-  if (i >= n) return playArm(1100);
+  if (i >= n) return playArm(1100 / viewer.speed);
   sc.value = i + 1; viewer.scrub(i + 1); blkLabel();
-  playing.timer = setTimeout(playBlocks, i < viewer.digCells(viewer.k).length ? 40 : 120);
+  playing.timer = setTimeout(playBlocks, (i < viewer.digCells(viewer.k).length ? 40 : 120) / viewer.speed);
 }
 function play() {
   if (playing) return pausePlay(!playing.paused);
@@ -792,6 +792,13 @@ function initControls() {
   $('#bPrev').onclick = () => blkGo(viewer.progress() - 1);
   $('#bNext').onclick = () => blkGo(viewer.progress() + 1);
   $('#replay').onclick = () => { stopPlay(); setStep(viewer.k, true, true); };
+  // скорость стройки: медленнее — успеваешь уследить, как копать
+  const sp = $('#speed'); sp.value = String(load('speed', 1)); viewer.speed = +sp.value || 1;
+  sp.onchange = () => {
+    const was = viewer.speed; viewer.speed = +sp.value; save('speed', viewer.speed);
+    // ждём следующий шаг по новой скорости
+    if (playing && !playing.paused && !viewer.seq) { clearTimeout(playing.timer); playArm(Math.max(0, playing.due - performance.now()) * was / viewer.speed); }
+  };
   $('#stepPause').onclick = () => { if (playing) return; viewer.pause(!viewer.paused); stepPauseWatch(); };
   $('#demoBtn').onclick = () => { setOpt({ demo: !viewer.opt.demo }); $('#demoBtn').setAttribute('aria-pressed', viewer.opt.demo); };
   // ползунок шлёт input чаще кадров: применяем не больше раза за кадр

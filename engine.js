@@ -157,7 +157,7 @@ export class Viewer {
     this.digRoot = new THREE.Group(); this.root.add(this.digRoot);
     this.anims = []; this.parts = []; this.pool = []; this.hlAnims = []; this.pending = new Set(); this.digs = [];
     // своё время анимаций: идёт, только пока сцену рисуют (вкладка шпаргалок, скрытый браузер — пауза)
-    this.at = 0; this.demoT0 = 0;
+    this.at = 0; this.demoT0 = 0; this.speed = 1; // speed — темп стройки и демо (×0,25…×2)
     this.animEnd = 0; this.dirty = true; this.isOn = true; this.onScreen = true; this.lastDraw = 0;
     this.opt = { ground: 'glass', highlight: true, onlyNew: false, demo: true, cut: null, layer: false, solo: false };
     // «по слоям»: всё ниже текущего слоя — бледный призрак одним общим материалом (без лишних шейдеров)
@@ -1139,7 +1139,7 @@ export class Viewer {
       if (this.dirty) { this.dirty = false; this.renderer.render(this.scene, this.camera); }
       return;
     }
-    const t = this.at += dt;
+    const t = this.at += dt * this.speed;
     let busy = false;
     if (this.tween) {
       const u = Math.min(1, (t - this.tween.t0) / this.tween.dur), e = inOutCubic(u);
