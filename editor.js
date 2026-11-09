@@ -109,6 +109,27 @@ function onPick(p) {
     }
     return;
   }
+  if (mode === 'path') {
+    // лопата: дёрн → тропинка. Природный верх грунта или поставленный дёрн/земля; прямоугольником — по слою первого клика
+    const c = p.en ? [p.en.x, p.en.y, p.en.z] : p.ground; if (!c) return;
+    if (tool.rect && !corner) { corner = c; return hint(); }
+    const a = corner || c; corner = null;
+    const y = a[1], dug = new Set(); for (const st of S.steps) for (const d of st.dig) dug.add(cellKey(d));
+    const todo = [];
+    for (let x = Math.min(a[0], c[0]); x <= Math.max(a[0], c[0]); x++)
+      for (let z = Math.min(a[2], c[2]); z <= Math.max(a[2], c[2]); z++) {
+        const f = findPut(x, y, z);
+        if (f) { const e = S.steps[f[0]].put[f[1]]; if (e[0] === 'grass' || e[0] === 'dirt') todo.push([x, y, z, f]); }
+        else if (y === -1 && !dug.has(cellKey([x, y, z])) && !dug.has(cellKey([x, y + 1, z]))) todo.push([x, y, z, null]);
+      }
+    if (!todo.length) return hint();
+    snapshot();
+    for (const [x, y, z, f] of todo) {
+      if (f && f[0] === S.cur) S.steps[f[0]].put[f[1]] = ['path', x, y, z];
+      else s.put.push(['path', x, y, z]);
+    }
+    return rebuild();
+  }
   if (mode === 'dig') {
     if (!p.ground) return;
     if (tool.rect && !corner) { corner = p.ground; return hint(); }
@@ -204,6 +225,7 @@ function showHover(h) {
   const mode = shift ? 'erase' : tool.mode;
   let c = null;
   if (h && mode === 'erase') c = h.en ? [h.en.x, h.en.y, h.en.z] : null;
+  else if (h && mode === 'path') c = h.en ? [h.en.x, h.en.y, h.en.z] : h.ground || null;
   else if (h && mode === 'dig') c = h.ground || null;
   else if (h && (h.en || h.ground) && h.n) { const b = h.en ? [h.en.x, h.en.y, h.en.z] : h.ground; c = [b[0] + h.n[0], b[1] + h.n[1], b[2] + h.n[2]]; }
   hoverBox.visible = !!c;
@@ -243,11 +265,12 @@ function panel() {
     <div class="emodes" role="group" aria-label="Что делает клик">
       <button data-mode="place" aria-pressed="${tool.mode === 'place'}">➕ Ставить</button>
       <button data-mode="dig" aria-pressed="${tool.mode === 'dig'}">⛏ Копать</button>
+      <button data-mode="path" aria-pressed="${tool.mode === 'path'}" title="Как лопатой в игре: дёрн становится тропинкой">🥄 Тропинка</button>
       <button data-mode="erase" aria-pressed="${tool.mode === 'erase'}">✖ Стереть</button>
     </div>
     ${tool.mode === 'dig' ? `<label class="erow">Вглубь <select id="edDepth">${[1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16].map(n => `<option value="${n}"${tool.depth === n ? ' selected' : ''}>${n} бл.</option>`).join('')}</select></label>`
       : `<div class="ecur">${thumbs.get(t) ? `<img src="${thumbs.get(t)}" alt="">` : ''}<b>${esc(name)}</b></div>${opts.join('')}`}
-    ${tool.mode !== 'erase' ? `<label class="chk"><input type="checkbox" id="edRect"${tool.rect ? ' checked' : ''}>прямоугольником (2 клика по углам)</label>` : '<p class="ehint">Клик по стенке ямы — засыпать клетку.</p>'}
+    ${tool.mode === 'path' ? '<p class="ehint">Клик по дёрну или земле — станет тропинкой, как лопатой в игре.</p>' : ''}${tool.mode !== 'erase' ? `<label class="chk"><input type="checkbox" id="edRect"${tool.rect ? ' checked' : ''}>прямоугольником (2 клика по углам)</label>` : '<p class="ehint">Клик по стенке ямы — засыпать клетку.</p>'}
     <h4>Шаги</h4>
     <div class="esteps">${S.steps.map((s, i) => `<button data-step="${i}" aria-pressed="${i === S.cur}">${i + 1}</button>`).join('')}<button id="edAddStep" title="Новый шаг">＋</button></div>
     <label class="erow">Название шага <input id="edStepT" value="${esc(step().t)}"></label>
