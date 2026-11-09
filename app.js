@@ -107,6 +107,10 @@ const tierHtml = t => {
   return `<span class="tier${plus ? ' plus' : ''}" data-t="${b}" title="Уровень ${tName(t)}: ${TIERS[b][0]}${plus ? ', чуть сложнее' : ''} — ${TIERS[b][1]}" aria-label="уровень ${tName(t)}"><i></i><i></i><i></i></span>`;
 };
 let pfilt = 'all';
+// проверена ли ферма в игре (поле tested в файле фермы); у механизмов метки нет
+const TESTED = ['✅ проверено в игре', 'Фима построил её в выживании, и она работает'];
+const UNTESTED = ['⚠️ не проверено в игре', 'Схема собрана по источникам, в игре её ещё не строили. Может не работать — если что-то не так, напиши.'];
+const testMark = f => (f.tested ? TESTED : UNTESTED);
 function renderPicker() {
   const farms = LIST();
   pfilt = load(mode === 'mech' ? 'filterMech' : 'filter', 'all');
@@ -117,7 +121,7 @@ function renderPicker() {
   for (const f of ordered()) {
     if (f.cat !== last) { last = f.cat; list += `<h5 data-cat="${f.cat}">${esc(CATL()[catIdx(f.cat)]?.[1] || 'Разное')}</h5>`; }
     list += `<a class="pick" href="#${f.id}" data-id="${f.id}" data-cat="${f.cat}" aria-current="false">
-      <span class="row"><b>${esc(f.title)}</b><span class="rt"><small class="pp"></small>${tierHtml(f.tier || 1)}</span></span><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i><em class="pbar" aria-hidden="true"></em>
+      <span class="row"><b>${esc(f.title)}</b><span class="rt"><small class="pp"></small><small class="tst" title="${esc(testMark(f)[0])}">${f.tested ? '✅' : '⚠️'}</small>${tierHtml(f.tier || 1)}</span></span><span>${esc(f.short)}</span><i>${esc(f.stats[0][1])}</i><em class="pbar" aria-hidden="true"></em>
     </a>`;
   }
   $('#picker').innerHTML = `${mode === 'mech' ? '<a class="pmemo" href="#redstone"><b>Памятка</b> что делает каждый блок →</a>' : ''}<div class="pchips pfilt" role="group" aria-label="Категории">${btn('all', 'Все', farms.length)}${used.map(([id, n]) => btn(id, n, farms.filter(f => f.cat === id).length)).join('')}</div>
@@ -189,7 +193,7 @@ function buildPanel() {
     <header class="farmhead">
       <h2>${esc(farm.title)}</h2>
       <p>${esc(farm.short)}</p>
-      <div class="badges">${farm.badges.map(b => `<span>${esc(b)}</span>`).join('')}<span class="tb" title="${esc(TIERS[tFloor(farm.tier)][1])}">${tierHtml(farm.tier)}ур. ${tName(farm.tier)} · ${TIERS[tFloor(farm.tier)][0]}</span></div>
+      <div class="badges">${farm.badges.map(b => `<span>${esc(b)}</span>`).join('')}${FARM_IDS.includes(farm.id) ? `<span class="tst ${farm.tested ? 'ok' : 'no'}" title="${esc(testMark(farm)[1])}">${testMark(farm)[0]}</span>` : ''}<span class="tb" title="${esc(TIERS[tFloor(farm.tier)][1])}">${tierHtml(farm.tier)}ур. ${tName(farm.tier)} · ${TIERS[tFloor(farm.tier)][0]}</span></div>
       <dl class="stats">${farm.stats.map(([a, b]) => `<div><dt>${esc(a)}</dt><dd>${esc(b)}</dd></div>`).join('')}</dl>
     </header>
     ${varBlock()}
