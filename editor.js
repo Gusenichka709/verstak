@@ -380,8 +380,14 @@ function events() {
           const d = JSON.parse(ta.value);
           if (!Array.isArray(d.steps)) throw 0;
           snapshot();
-          S = { title: d.title || 'Схема', steps: d.steps.map((s, i) => ({ t: s.t || `Шаг ${i + 1}`, put: s.put || [], dig: s.dig || [], ents: s.ents || [] })), cur: 0 };
-          $('#edTitle').value = S.title; ta.hidden = true; rebuild(false);
+          // незнакомые блоки и мобы выбрасываем: иначе сцена не соберётся и редактор встанет
+          const bad = new Set(), arr = v => (Array.isArray(v) ? v : []);
+          const okPut = p => Array.isArray(p) && (BLOCKS[p[0]] ? true : (bad.add(String(p[0])), false));
+          const okEnt = n => n && (ENTS[n.e] ? true : (bad.add(String(n.e)), false));
+          S = { title: String(d.title || 'Схема'), steps: d.steps.map((s, i) => ({ t: String(s?.t || `Шаг ${i + 1}`), put: arr(s?.put).filter(okPut), dig: arr(s?.dig).filter(Array.isArray), ents: arr(s?.ents).filter(okEnt) })), cur: 0 };
+          if (!S.steps.length) S = blank();
+          $('#edTitle').value = S.title; rebuild(false);
+          if (bad.size) ta.value = `Схема вставлена, но этих блоков здесь нет, я их пропустил: ${[...bad].join(', ')}`; else ta.hidden = true;
         } catch { ta.value = 'Не получилось прочитать схему — вставь текст целиком.'; }
         return;
       }

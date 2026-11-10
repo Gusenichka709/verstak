@@ -290,6 +290,7 @@ function moveStepPill() {
 function setStep(k, animate = true, replay = false) {
   if (viewer) { viewer.goto(k, { animate, replay }); curK = viewer.k; }
   else curK = Math.max(1, Math.min(farm.steps.length, k)); // без WebGL шаги всё равно листаются
+  save('at:' + farm.id, curK === farm.steps.length ? undefined : curK); // вернёшься — откроется на том же шаге
   if (!uiRaf) uiRaf = nextFrame(syncUI);
   stepPauseWatch();
 }
@@ -634,6 +635,19 @@ function cutGo(v) {
   c.value = v; viewer.cutReset = false; viewer.cutAuto = false;
   setOpt({ cut: v >= hi && !viewer.opt.layer ? null : v }); showCut(); chip();
 }
+// шаг, на котором ты остановился в этой схеме; не был — показываем готовую постройку
+function startStep(f) {
+  const k = +load('at:' + f.id, 0);
+  return k >= 1 && k <= f.steps.length ? k : f.steps.length;
+}
+// пока открыта схема, экран телефона не гаснет: руки заняты игрой
+let wake = null;
+async function keepAwake() {
+  if (!navigator.wakeLock || wake || document.hidden || $('#v-farms').hidden) return;
+  try { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => (wake = null)); } catch { /* запретили — и ладно */ }
+}
+addEventListener('pointerdown', keepAwake, { passive: true });
+document.addEventListener('visibilitychange', keepAwake);
 function showFarm(f) {
   stopPlay();
   if (farm !== f) {
@@ -644,8 +658,8 @@ function showFarm(f) {
       document.querySelectorAll('[name=ground]').forEach(r => (r.checked = r.value === gm));
       viewer.set({ cut: f.cut ?? null, ground: gm, layer: false, solo: false });
       $('#layer').checked = false; $('#solo').checked = false; $('.cutbox').classList.remove('layer');
-      viewer.goto(f.steps.length, { animate: false }); curK = viewer.k;
-    } else curK = f.steps.length;
+      viewer.goto(startStep(f), { animate: false }); curK = viewer.k;
+    } else curK = startStep(f);
     // новая ферма — сразу, без кадра с пустой карточкой
     uiRaf = 0;
     buildPanel(); updateStep(curK, 0); updateControls();
@@ -780,7 +794,7 @@ function initFarmsView() {
     if (b.closest('.steps') && PHONE.matches) $('#panel .stepcard').scrollIntoView({ block: 'start', behavior: calm() ? 'auto' : 'smooth' });
   });
   addEventListener('keydown', e => {
-    if ($('#v-farms').hidden || e.target.closest?.('input, textarea')) return;
+    if ($('#v-farms').hidden || e.target.closest?.('input, textarea, select')) return;
     // на краях ничего не делаем: нечего перестраивать
     if (e.key === 'ArrowRight' && curK < farm.steps.length) { stopPlay(); setStep(curK + 1, true); }
     if (e.key === 'ArrowLeft' && curK > 1) { stopPlay(); setStep(curK - 1, false); }
