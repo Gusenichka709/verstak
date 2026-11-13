@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { Viewer, expandPut } from './engine.js';
 import { BLOCKS, ENTS } from './blocks.js';
+import { planFarm, TEMP_NAME } from './plan.js';
 import FARM_IDS, { CATS, TIERS } from './farms/index.js';
 import MECH_IDS, { MCATS } from './mech/index.js';
 import { load, save } from './store.js';
@@ -84,6 +85,9 @@ function materials(f, only) {
     }
     for (const e of s.ents || []) if (ENTS[e.e].item) add(ENTS[e.e].n, 1);
   });
+  // леса под столбы и мостики: после шага их ломаешь и забираешь, так что нужно столько, сколько стоит разом
+  const pl = planFarm(f), tmp = only ? pl[only - 1]?.temps || 0 : Math.max(0, ...pl.map(p => p?.temps || 0));
+  if (tmp) out.set(TEMP_NAME, tmp);
   return out;
 }
 const allMats = new WeakMap(); // материалы на всю ферму считаем один раз
@@ -463,7 +467,7 @@ const fmt = n => n >= 10000 ? Math.round(n / 1000) + 'k' : String(Math.round(n))
 function matsFor(f, n) {
   // fixed — что ставится один раз на всю ферму (сундук, наблюдатель на ряд): не умножаем
   const b = f.calc?.base || 1, fix = f.calc?.fixed || [], out = [];
-  const one = k => fix.some(x => k.startsWith(x));
+  const one = k => k === TEMP_NAME || fix.some(x => k.startsWith(x));
   for (const [k, c] of [...farmMats(f), ...(f.extra || [])]) out.push([k, one(k) ? c : Math.ceil(c * n / b)]);
   return out;
 }

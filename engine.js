@@ -1,7 +1,8 @@
 // 3D-просмотрщик построек: шаги, анимация появления блоков, грунт, срез по слоям, демо.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { BLOCKS, ENTS, DIRS, FACES, mat, tex, maskGeo, label, setAniso, pistonExt } from './blocks.js';
+import { BLOCKS, ENTS, DIRS, FACES, mat, tex, maskGeo, label, setAniso, pistonExt, tempBlock } from './blocks.js';
+import { planFarm, planned } from './plan.js';
 
 const K = (x, y, z) => `${x},${y},${z}`;
 const waterH = e => (e.p.src ? .875 : .72);
@@ -64,6 +65,8 @@ const FILL = new Set(['water', 'lava']);
 const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35, morph: .32 };
 const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42, morph: .05 }; // доля времени, когда «приземлился»: пыль и рамка
 const LEAVE = new Set(['out', 'entOut']);
+// стройка «как в выживании» (см. plan.js): секунды на действие игрока; длинный шаг сжимается до BUILD_MAX
+const ACT = { walk: .2, climb: .3, fall: .12, put: .26, rise: .34, rm: .3 }, BUILD_MAX = 14;
 // Пыль соединяется с пылью рядом, ступенькой вверх (если над собой пусто) и вниз (если над нижней пусто) —
 // поэтому под цельным блоком провод проходит, не касаясь провода сверху («мостик»).
 const SOFT = new Set(['dust', 'air', 'lever', 'button', 'rtorch', 'torch', 'repeater', 'comparator', 'water', 'lava', 'rail', 'powered_rail', 'sign', 'ladder', 'mark', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling']);
@@ -138,7 +141,8 @@ export class Viewer {
     // ламп нет: каждая грань затеняется по своему направлению (см. shadeHook в blocks.js)
     this.root = new THREE.Group(); this.scene.add(this.root);
     this.blockRoot = new THREE.Group(); this.entRoot = new THREE.Group(); this.fxRoot = new THREE.Group(); this.actorRoot = new THREE.Group();
-    this.root.add(this.blockRoot, this.entRoot, this.fxRoot, this.actorRoot);
+    this.buildRoot = new THREE.Group();
+    this.root.add(this.blockRoot, this.entRoot, this.fxRoot, this.actorRoot, this.buildRoot);
     this.groundRoot = new THREE.Group(); this.root.add(this.groundRoot);
     this.edgeGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
     this.hlMat = new THREE.LineBasicMaterial({ color: 0xffc94d, transparent: true, opacity: .95 });
@@ -214,6 +218,7 @@ export class Viewer {
   /* ---------- загрузка фермы ---------- */
   setFarm(farm) {
     this.disposeActors();
+    this.clearBuild();
     this.clearDig();
     for (const g of [this.blockRoot, this.entRoot, this.fxRoot, this.actorRoot, this.digRoot]) g.clear();
     this.dropGroundCache();
@@ -354,7 +359,9 @@ export class Viewer {
     const now = this.at;
     const digEnd = fwd ? this.startDig(k, now + (replay ? .15 : .35)) : 0;
     let end = digEnd;
-    if (fresh.length) {
+    const pl = fwd && fresh.length ? this.planFor(k) : null;
+    if (pl) end = this.planAnims(pl, fresh, now, digEnd);
+    else if (fresh.length) {
       // волна: блоки одного слоя и одной диагонали падают почти вместе, снизу вверх
       const key = m => m.userData.en.y * 100 + m.userData.en.x + m.userData.en.z;
       fresh.sort((a, b) => key(a) - key(b));
@@ -407,6 +414,7 @@ export class Viewer {
   }
   // мгновенно довести все анимации до конца: перед новым шагом, «по одному блоку», сменой фермы
   finishAnims() {
+    this.clearBuild();
     for (const a of this.anims) this.endAnim(a);
     for (const id of this.pending) this.hlBy?.get(id)?.forEach(o => (o.visible = true));
     this.anims = []; this.pending = new Set();
@@ -477,6 +485,112 @@ export class Viewer {
     const objs = this.hlBy?.get(a.id);
     if (objs) { objs.forEach(o => (o.visible = true)); this.hlAnims.push({ objs, t0: this.at, s: objs[0].userData.s }); }
   }
+  /* ---------- стройка «как в выживании» ---------- */
+  planFor(k) {
+    const p = this.farm?.plan === false ? null : planFarm(this.farm)[k - 1];
+    return p && p.order.length ? p : null;
+  }
+  // план → время: где фишка «ты» в каждый момент, когда встаёт каждый блок, когда стоят временные
+  timeline(pl) {
+    let T = 0, P = pl.start;
+    const keys = [], yaws = [], swing = [], at = new Map(), temps = [], open = new Map();
+    const key = (t, p, dy = 0) => keys.push([t, p[0] + .5, p[1] + dy, p[2] + .5]);
+    const face = (p, c) => { const dx = c[0] + .5 - (p[0] + .5), dz = c[2] + .5 - (p[2] + .5); if (dx || dz) yaws.push([T, Math.atan2(-dx, -dz)]); };
+    let lastPut = 0, lastWater = null;
+    key(0, P);
+    for (const a of pl.acts) {
+      if (a.a === 'go') for (let i = 1; i < a.path.length; i++) {
+        const c = a.path[i], dy = c[1] - P[1];
+        face(P, c); T += dy > 0 ? ACT.climb : ACT.walk + Math.max(0, -dy) * ACT.fall;
+        key(T, c); P = c;
+      }
+      else if (a.a === 'fall') { key(T + .04, P); T += .04 + ACT.fall * Math.max(1, P[1] - a.to[1]); key(T, a.to); P = a.to; }
+      else if (a.a === 'put') {
+        const en = this.entries[a.id], c = en.cells[0];
+        face(P, c); key(T, P); swing.push([T, T + ACT.put, ACT.put]);
+        at.set(a.id, T + ACT.put * .4); lastPut = T + ACT.put * .4; if (en.t === 'water') lastWater = lastPut;
+        T += ACT.put;
+      }
+      else if (a.a === 'tmp' && a.rise) {
+        // прыжок: блок под ноги в верхней точке, приземляешься на него
+        key(T, P); key(T + ACT.rise * .45, P, 1.25); swing.push([T + .05, T + ACT.rise, ACT.rise * .9]);
+        const t = { c: a.c, on: T + ACT.rise * .45 }; temps.push(t); open.set(K(...a.c), t);
+        P = [P[0], P[1] + 1, P[2]]; T += ACT.rise; key(T, P);
+      }
+      else if (a.a === 'tmp') {
+        face(P, a.c); key(T, P); swing.push([T, T + ACT.put, ACT.put]);
+        const t = { c: a.c, on: T + ACT.put * .4 }; temps.push(t); open.set(K(...a.c), t); T += ACT.put;
+      }
+      else if (a.a === 'rm') {
+        face(P, a.c); key(T, P); swing.push([T, T + ACT.rm, ACT.rm / 2]);
+        // сломал нижний — остальные леса этой кучки осыпаются снизу вверх
+        (a.cells || [a.c]).forEach((c, i) => { const t = open.get(K(...c)); if (t) { t.off = T + ACT.rm + i * .05; open.delete(K(...c)); } });
+        if (a.cells) T += a.cells.length * .05;
+        T += ACT.rm;
+      }
+    }
+    key(T + .3, P);
+    // длинный шаг сжимаем целиком: всё то же, только быстрее
+    const f = Math.min(1, BUILD_MAX / Math.max(T, .01)), sc = v => v * f;
+    keys.forEach(k => (k[0] = sc(k[0]))); yaws.forEach(y => (y[0] = sc(y[0]))); swing.forEach(w => { w[0] = sc(w[0]); w[1] = sc(w[1]); w[2] = sc(w[2]); });
+    for (const [id, t] of at) at.set(id, sc(t));
+    temps.forEach(t => { t.on = sc(t.on); if (t.off !== undefined) t.off = sc(t.off); });
+    return { a: { keys, yaws, swing, yaw: yaws[0]?.[1] || 0 }, at, temps, len: sc(T + .3), lastPut: sc(lastPut), lastWater: lastWater === null ? null : sc(lastWater) };
+  }
+  // блоки шага встают в порядке плана, фишка «ты» ходит и ставит, временные блоки появляются и ломаются
+  planAnims(pl, fresh, now, digEnd) {
+    const t0 = digEnd ? digEnd + .1 : now + .05, tl = this.timeline(pl);
+    const shov = new Map(this.digs.filter(d => d.shovel).map(d => [K(d.x, d.y, d.z), d]));
+    const G = this.farm.ground, every = Math.max(1, Math.ceil(fresh.length / 18));
+    let end = t0 + tl.len, extra = 0;
+    fresh.forEach((m, i) => {
+      const en = m.userData.en;
+      // само растёт или растекается — сразу после того, что его породило
+      let tp = tl.at.get(en.id);
+      if (tp === undefined) tp = (en.t === 'water' && tl.lastWater !== null ? tl.lastWater : tl.lastPut) + .15 + (extra++ % 12) * .05;
+      tp += t0;
+      const sd = G && en.t === 'path' && shov.get(K(en.x, en.y, en.z));
+      if (sd) { sd.tb = tp; this.addAnim(m, 'morph', tp); return; }
+      const kind = kindOf(en); this.addAnim(m, kind, tp, { dust: kind === 'drop' && i % every === 0 });
+      end = Math.max(end, tp + DUR[kind]);
+    });
+    if (!this.builder) { this.builder = ENTS.player.build({ tool: 'none' }); this.buildRoot.add(this.builder); }
+    const temps = tl.temps.map(t => {
+      const m = new THREE.Group(); m.add(tempBlock()); m.position.set(...t.c); m.visible = false;
+      this.buildRoot.add(m); return { ...t, m, gone: false };
+    });
+    this.build = { k: this.k, a: tl.a, t0, end: t0 + tl.len, temps };
+    if (this.eyeMark) this.eyeMark.visible = false;
+    this.buildFrame(this.at);
+    return end;
+  }
+  buildFrame(t) {
+    const b = this.build, T = t - b.t0, cut = this.opt.cut;
+    if (t >= b.end) { this.clearBuild(); return; }
+    const ks = b.a.keys, st = Viewer.sample(ks, T) || (T < ks[0][0] ? ks[0] : ks[ks.length - 1]).slice(1);
+    const o = this.builder, [x, y, z] = st;
+    o.visible = !(cut !== null && y > cut + 1);
+    o.position.set(x, y, z);
+    if (T < ks[0][0]) o.rotation.y = b.a.yaw; else this.animPerson(b.a, o, T, x, z);
+    for (const p of b.temps) {
+      const on = T >= p.on && (p.off === undefined || T < p.off);
+      if (!on && p.off !== undefined && T >= p.off && !p.gone) { p.gone = true; if (T - p.off < .3) this.chips({ x: p.c[0], y: p.c[1], z: p.c[2], kind: '#d9b54a', floor: p.c[1] }, 6, .7, .45); }
+      p.m.visible = on && !(cut !== null && p.c[1] > cut);
+      if (!p.m.visible) continue;
+      // встаёт с лёгким перелётом, перед тем как сломают — дрожит
+      const u = clamp01((T - p.on) / .25), sc = Math.max(.01, outBack(u, 2.2));
+      const sh = p.off !== undefined && p.off - T < .25 ? Math.sin(T * 70) * .03 : 0;
+      p.m.scale.setScalar(sc); p.m.position.set(p.c[0] + .5 * (1 - sc) + sh, p.c[1], p.c[2] + .5 * (1 - sc));
+    }
+  }
+  clearBuild() {
+    if (!this.build) return;
+    this.build = null;
+    for (const o of [...this.buildRoot.children]) if (o !== this.builder) this.buildRoot.remove(o);
+    if (this.builder) this.builder.visible = false;
+    if (this.eyeMark) this.markEye(this.eyeE);
+    this.dirty = true;
+  }
   stepBounds(k) {
     const s = this.farm.steps[k - 1], b = new THREE.Box3(); let n = 0;
     const add = (x, y, z) => { b.expandByPoint(new THREE.Vector3(x, y, z)); b.expandByPoint(new THREE.Vector3(x + 1, y + 1, z + 1)); n++; };
@@ -484,6 +598,7 @@ export class Viewer {
     for (const en of this.entries) if (en.step === k && !(en.t === 'water' && !en.p.src)) for (const [x, y, z] of en.cells) add(x, y, z);
     for (const e of this.ents) if (e.step === k) add(e.x - .5, e.y, e.z - .5);
     if (s.focus) { b.makeEmpty(); add(...s.focus.slice(0, 3)); add(...s.focus.slice(3)); }
+    else if (this.build?.k === k) for (const c of this.build.temps) add(...c.c); // столбы и мостики тоже в кадр
     return n ? b : null;
   }
   focusOn(b) {
@@ -501,7 +616,7 @@ export class Viewer {
     if (!this.eyeMark) { this.eyeMark = ENTS.player.build({ tool: 'none' }); this.root.add(this.eyeMark); }
     const m = this.eyeMark, cut = this.opt.cut;
     // прячем только в «по слоям» (там важен ряд), автосрез сплошного грунта фишку не скрывает
-    m.visible = !!e && !this.inEye && !(this.opt.layer && cut !== null && (e[1] > cut + .2 || this.solo() && e[1] < cut - .5));
+    m.visible = !!e && !this.inEye && !this.build && !(this.opt.layer && cut !== null && (e[1] > cut + .2 || this.solo() && e[1] < cut - .5));
     if (e) { m.position.set(e[0], e[1], e[2]); m.rotation.y = Math.atan2(-(e[3] - e[0]), -(e[5] - e[2])); }
     this.dirty = true;
   }
@@ -649,8 +764,10 @@ export class Viewer {
 
   /* ---------- по одному блоку ---------- */
   putMeshes() {
+    // порядок — как в плане стройки (по опорам), без плана — снизу вверх
+    const pl = this.planFor(this.k), ord = new Map((pl?.order || []).map((id, i) => [id, i]));
     const blocks = this.entries.filter(en => en.step === this.k && this.active.has(en.id)).map(en => this.meshFor(en))
-      .sort((a, b) => (a.userData.en.y - b.userData.en.y) || (a.userData.en.x + a.userData.en.z - b.userData.en.x - b.userData.en.z));
+      .sort((a, b) => ((ord.get(a.userData.en.id) ?? 1e9) - (ord.get(b.userData.en.id) ?? 1e9)) || (a.userData.en.y - b.userData.en.y) || (a.userData.en.x + a.userData.en.z - b.userData.en.x - b.userData.en.z));
     // мобы и лодка этого шага — тоже «блоки» ползунка, после построек
     const ents = this.ents.filter(e => e.step === this.k && this.entVisible(e)).map(e => this.entFor(e));
     return [...blocks, ...ents];
@@ -1202,6 +1319,7 @@ export class Viewer {
       d.crack.position.copy(d.cube.position);
       busy = true;
     }
+    if (this.build) { this.buildFrame(t); busy = true; }
     if (this.parts.length) {
       busy = true;
       let w = 0;

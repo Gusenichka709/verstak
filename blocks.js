@@ -23,7 +23,7 @@ function shade(hex, f) {
   return `rgb(${c((n >> 16) & 255)},${c((n >> 8) & 255)},${c(n & 255)})`;
 }
 const pick = (r, a) => a[(r() * a.length) | 0];
-const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line', 'carrots', 'trapdoor']);
+const CUTOUT = new Set(['glass', 'dust', 'flow_arrow', 'src_ring', 'ladder', 'rail', 'bamboo_leaves', 'shoot', 'iron_bars', 'cane', 'prail', 'stem_m', 'stem_p', 'stem_m_att', 'stem_p_att', 'birch_sap', 'birch_lv', 'dust_line', 'carrots', 'trapdoor', 'scaf_side', 'scaf_top']);
 
 const PAL = {
   stone: ['#7e7e7e', '#888888', '#737373', '#959595', '#6b6b6b'],
@@ -44,6 +44,16 @@ const frame = (g, c, w = 16, h = 16) => { g.fillStyle = c; g.fillRect(0, 0, w, 1
 D.missing = g => { g.fillStyle = '#ff00ff'; g.fillRect(0, 0, 16, 16); };
 D.stone = (g, r, P) => noise(P, r, PAL.stone);
 D.dirt = (g, r, P) => noise(P, r, PAL.dirt);
+// строительные леса (временный столб, мостик): бамбуковая рамка с раскосом, сквозь неё видно
+const SCAF = ['#d9b54a', '#c9a23c', '#e2c25a'];
+D.scaf_side = (g, r, P) => {
+  for (let i = 0; i < 16; i++) for (const j of [0, 1, 14, 15]) { P(i, j, pick(r, SCAF)); P(j, i, pick(r, SCAF)); }
+  for (let i = 2; i < 14; i++) { P(i, i, pick(r, SCAF)); P(i, i + 1 > 13 ? 13 : i + 1, '#a8832c'); }
+};
+D.scaf_top = (g, r, P) => {
+  for (let i = 0; i < 16; i++) for (const j of [0, 1, 14, 15]) { P(i, j, pick(r, SCAF)); P(j, i, pick(r, SCAF)); }
+  for (let y = 5; y < 11; y++) if (y !== 7 && y !== 8) for (let x = 2; x < 14; x++) P(x, y, pick(r, ['#c99b3a', '#b88c33']));
+};
 D.grass_top = (g, r, P) => {
   // трава: пятна потемнее и короткие светлые травинки, чтобы поле не было ровной кашей
   noise(P, r, PAL.grass);
@@ -427,6 +437,7 @@ function boxMesh(base, m) {
 }
 function bx(w, h, d, x, y, z, m) { const o = boxMesh(geo(w, h, d), m); o.position.set(x, y, z); return o; }
 const six = (top, side, bottom = top) => [side, side, top, bottom, side, side];
+export const tempBlock = () => cube('scaf_top', 'scaf_side');
 function cube(top, side = top, bottom = top) { return bx(1, 1, 1, .5, .5, .5, six(mat(top), mat(side), mat(bottom))); }
 
 const ROT = { u: [0, 0, 0], d: [Math.PI, 0, 0], n: [-Math.PI / 2, 0, 0], s: [Math.PI / 2, 0, 0], e: [0, 0, -Math.PI / 2], w: [0, 0, Math.PI / 2] };
