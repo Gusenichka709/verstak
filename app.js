@@ -752,6 +752,8 @@ function initFarmsView() {
   renderPicker();
   try {
     viewer = new Viewer($('#viewport'), {
+      // подпись «что сейчас делаешь» во время стройки шага
+      onSay: t => { const el = $('#say'); el.textContent = t || ''; el.classList.toggle('show', !!t); },
       onHover: (h, e) => {
         // между блоками подсказка не мигает: прячем с маленькой задержкой
         clearTimeout(tipOff);

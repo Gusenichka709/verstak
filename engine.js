@@ -66,7 +66,7 @@ const DUR = { drop: .5, pop: .38, fill: .55, out: .3, entIn: .75, entOut: .35, m
 const LAND = { drop: .5, pop: .45, fill: .6, entIn: .42, morph: .05 }; // доля времени, когда «приземлился»: пыль и рамка
 const LEAVE = new Set(['out', 'entOut']);
 // стройка «как в выживании» (см. plan.js): секунды на действие игрока; длинный шаг сжимается до BUILD_MAX
-const ACT = { walk: .2, climb: .3, fall: .12, put: .26, rise: .34, rm: .3 }, BUILD_MAX = 14;
+const ACT = { walk: .2, climb: .3, fall: .12, put: .26, rise: .34, rm: .3 }, BUILD_MAX = 24;
 // Пыль соединяется с пылью рядом, ступенькой вверх (если над собой пусто) и вниз (если над нижней пусто) —
 // поэтому под цельным блоком провод проходит, не касаясь провода сверху («мостик»).
 const SOFT = new Set(['dust', 'air', 'lever', 'button', 'rtorch', 'torch', 'repeater', 'comparator', 'water', 'lava', 'rail', 'powered_rail', 'sign', 'ladder', 'mark', 'sugar_cane', 'bamboo_shoot', 'melon_stem', 'pumpkin_stem', 'birch_sapling']);
@@ -493,7 +493,10 @@ export class Viewer {
   // план → время: где фишка «ты» в каждый момент, когда встаёт каждый блок, когда стоят временные
   timeline(pl) {
     let T = 0, P = pl.start;
-    const keys = [], yaws = [], swing = [], at = new Map(), temps = [], open = new Map();
+    const keys = [], yaws = [], swing = [], at = new Map(), temps = [], open = new Map(), say = [];
+    // подпись «что сейчас делаешь» — для тех, кто в игре впервые
+    const tell = txt => { if (!say.length || say[say.length - 1][1] !== txt) say.push([T, txt]); };
+    const nPut = pl.order.length; let iPut = 0;
     const key = (t, p, dy = 0) => keys.push([t, p[0] + .5, p[1] + dy, p[2] + .5]);
     const face = (p, c) => { const dx = c[0] + .5 - (p[0] + .5), dz = c[2] + .5 - (p[2] + .5); if (dx || dz) yaws.push([T, Math.atan2(-dx, -dz)]); };
     let lastPut = 0, lastWater = null;
@@ -501,27 +504,33 @@ export class Viewer {
     for (const a of pl.acts) {
       if (a.a === 'go') for (let i = 1; i < a.path.length; i++) {
         const c = a.path[i], dy = c[1] - P[1];
+        const scaf = c[0] === P[0] && c[2] === P[2];
+        tell(scaf && dy > 0 ? 'Лезь вверх по лесам: зажми пробел' : scaf && dy < 0 ? 'Спускайся по лесам: зажми Shift' : dy > 0 ? 'Запрыгни на блок' : 'Подойди сюда');
         face(P, c); T += dy > 0 ? ACT.climb : ACT.walk + Math.max(0, -dy) * ACT.fall;
         key(T, c); P = c;
       }
       else if (a.a === 'fall') { key(T + .04, P); T += .04 + ACT.fall * Math.max(1, P[1] - a.to[1]); key(T, a.to); P = a.to; }
       else if (a.a === 'put') {
         const en = this.entries[a.id], c = en.cells[0];
+        tell(`Поставь: ${BLOCKS[en.t].n.replace(/ \(.*\)$/, '')} · ${++iPut} из ${nPut}`);
         face(P, c); key(T, P); swing.push([T, T + ACT.put, ACT.put]);
         at.set(a.id, T + ACT.put * .4); lastPut = T + ACT.put * .4; if (en.t === 'water') lastWater = lastPut;
         T += ACT.put;
       }
       else if (a.a === 'tmp' && a.rise) {
         // прыжок: блок под ноги в верхней точке, приземляешься на него
+        tell('Прыгни и поставь леса под себя — так поднимаешься');
         key(T, P); key(T + ACT.rise * .45, P, 1.25); swing.push([T + .05, T + ACT.rise, ACT.rise * .9]);
         const t = { c: a.c, on: T + ACT.rise * .45 }; temps.push(t); open.set(K(...a.c), t);
         P = [P[0], P[1] + 1, P[2]]; T += ACT.rise; key(T, P);
       }
       else if (a.a === 'tmp') {
+        tell('Поставь леса — временная опора, потом сломаешь');
         face(P, a.c); key(T, P); swing.push([T, T + ACT.put, ACT.put]);
         const t = { c: a.c, on: T + ACT.put * .4 }; temps.push(t); open.set(K(...a.c), t); T += ACT.put;
       }
       else if (a.a === 'rm') {
+        tell('Леса больше не нужны: сломай нижний блок — осыпятся все');
         face(P, a.c); key(T, P); swing.push([T, T + ACT.rm, ACT.rm / 2]);
         // сломал нижний — остальные леса этой кучки осыпаются снизу вверх
         (a.cells || [a.c]).forEach((c, i) => { const t = open.get(K(...c)); if (t) { t.off = T + ACT.rm + i * .05; open.delete(K(...c)); } });
@@ -534,8 +543,9 @@ export class Viewer {
     const f = Math.min(1, BUILD_MAX / Math.max(T, .01)), sc = v => v * f;
     keys.forEach(k => (k[0] = sc(k[0]))); yaws.forEach(y => (y[0] = sc(y[0]))); swing.forEach(w => { w[0] = sc(w[0]); w[1] = sc(w[1]); w[2] = sc(w[2]); });
     for (const [id, t] of at) at.set(id, sc(t));
+    say.forEach(x => (x[0] = sc(x[0])));
     temps.forEach(t => { t.on = sc(t.on); if (t.off !== undefined) t.off = sc(t.off); });
-    return { a: { keys, yaws, swing, yaw: yaws[0]?.[1] || 0 }, at, temps, len: sc(T + .3), lastPut: sc(lastPut), lastWater: lastWater === null ? null : sc(lastWater) };
+    return { a: { keys, yaws, swing, yaw: yaws[0]?.[1] || 0 }, say, at, temps, len: sc(T + .3), lastPut: sc(lastPut), lastWater: lastWater === null ? null : sc(lastWater) };
   }
   // блоки шага встают в порядке плана, фишка «ты» ходит и ставит, временные блоки появляются и ломаются
   planAnims(pl, fresh, now, digEnd) {
@@ -560,7 +570,7 @@ export class Viewer {
       const m = new THREE.Group(); m.add(tempBlock()); m.position.set(...t.c); m.visible = false;
       this.buildRoot.add(m); return { ...t, m, gone: false };
     });
-    this.build = { k: this.k, a: tl.a, t0, end: t0 + tl.len, temps };
+    this.build = { k: this.k, a: tl.a, say: tl.say, t0, end: t0 + tl.len, temps };
     if (this.eyeMark) this.eyeMark.visible = false;
     this.buildFrame(this.at);
     return end;
@@ -569,6 +579,8 @@ export class Viewer {
     const b = this.build, T = t - b.t0, cut = this.opt.cut;
     if (t >= b.end) { this.clearBuild(); return; }
     const ks = b.a.keys, st = Viewer.sample(ks, T) || (T < ks[0][0] ? ks[0] : ks[ks.length - 1]).slice(1);
+    let txt = null; for (const [q, w] of b.say) if (T >= q) txt = w;
+    if (txt !== this.sayNow) { this.sayNow = txt; this.cb.onSay?.(txt); }
     const o = this.builder, [x, y, z] = st;
     o.visible = !(cut !== null && y > cut + 1);
     o.position.set(x, y, z);
@@ -587,6 +599,7 @@ export class Viewer {
   clearBuild() {
     if (!this.build) return;
     this.build = null;
+    if (this.sayNow) { this.sayNow = null; this.cb.onSay?.(null); }
     for (const o of [...this.buildRoot.children]) if (o !== this.builder) this.buildRoot.remove(o);
     if (this.builder) this.builder.visible = false;
     if (this.eyeMark) this.markEye(this.eyeE);

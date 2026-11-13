@@ -212,7 +212,7 @@ class Planner {
   }
   supported(it) {
     const rd = it.en && reqDir(it.en);
-    if (rd) { const [x, y, z] = it.cells[0], d = DIRS[rd]; return firm(this.c(x + d[0], y + d[1], z + d[2])); }
+    if (rd) { const [x, y, z] = it.cells[0], d = DIRS[rd]; return this.c(x + d[0], y + d[1], z + d[2]) === 2; }
     const own = new Set(it.cells.map(c => K(...c)));
     return it.cells.some(([x, y, z]) => N6.some(([dx, dy, dz]) => !own.has(K(x + dx, y + dy, z + dz)) && firm(this.c(x + dx, y + dy, z + dz))));
   }
@@ -263,6 +263,33 @@ class Planner {
       if (to) { acts.push({ a: 'fall', to }); P = to; }
     };
     const ref = G ? G.top + 1 : this.floor + 1;
+    // ломаем леса: у каждой связной кучки — нижний блок (стоя рядом, не на ней), осыпается вся; keep — кучку под ногами не трогать
+    const tear = (keep, T) => {
+      let n = 0;
+      const lk = new Set(live.map(c => K(...c)));
+      while (lk.size) {
+        const seed = live.slice().reverse().find(c => lk.has(K(...c))), comp = [seed], seen = new Set([K(...seed)]);
+        for (let h = 0; h < comp.length; h++) for (const [dx, dy, dz] of N6) {
+          const nn = [comp[h][0] + dx, comp[h][1] + dy, comp[h][2] + dz], kk = K(...nn);
+          if (lk.has(kk) && !seen.has(kk)) { seen.add(kk); comp.push(nn); }
+        }
+        for (const c of comp) lk.delete(K(...c));
+        if (keep && seen.has(keep)) continue;
+        // кучка рядом со следующим блоком — пригодится (нарастишь её), не ломаем
+        if (T && comp.some(c => Math.abs(c[0] - T.cells[0][0]) + Math.abs(c[2] - T.cells[0][2]) <= 2)) continue;
+        // кучка держит ещё не поставленный блок (мостик под висячий) — пока нужна
+        if (keep !== null && comp.some(c => N6.some(([dx, dy, dz]) => this.rem.has(K(c[0] + dx, c[1] + dy, c[2] + dz))))) continue;
+        const base = comp.reduce((a, c) => (c[1] < a[1] ? c : a));
+        comp.sort((a, b) => (a[1] - b[1]) || (Math.abs(a[0] - base[0]) + Math.abs(a[2] - base[2]) - Math.abs(b[0] - base[0]) - Math.abs(b[2] - base[2])));
+        const spots = this.bfs(P).filter(i => { const [x, y, z] = this.xyz(i); return !seen.has(K(x, y - 1, z)) && !seen.has(K(x, y, z)) && !seen.has(K(x, y + 1, z)); });
+        const sp = this.spotFor({ cells: [base] }, spots, true);
+        if (sp) goTo(sp);
+        for (const c of comp) { this.grid[this.idx(...c)] = 0; const j = live.findIndex(l => l[0] === c[0] && l[1] === c[1] && l[2] === c[2]); if (j >= 0) live.splice(j, 1); }
+        acts.push({ a: 'rm', c: base, cells: comp, warp: !sp }); n++;
+        fall();
+      }
+      return n > 0;
+    };
     let guard = rem.length * 8 + 200;
     while (rem.length && guard-- > 0) {
       const spots = this.bfs(P);
@@ -277,6 +304,12 @@ class Planner {
       if (done) continue;
       const T = sup[0];
       if (T && T.cells[0][1] < P[1] - 1 && descend()) continue;
+      // отсюда ничего не достать — старые леса больше не нужны (до полезных дошёл бы пешком по ним):
+      // слезь и сломай их, прежде чем строить новые, — в руках не нужно таскать гору лесов
+      if (live.length) {
+        if (P[1] > ref && descend()) continue;
+        if (tear(below() >= 0 ? K(P[0], P[1] - 1, P[2]) : '', T)) continue;
+      }
       if (sup.slice(0, 6).some(t => this.pillar(t, spots, goTo, putTemp, () => P))) continue;
       if (!T && this.bridge(rem, prio)) continue;
       if (descend()) continue;
@@ -284,24 +317,7 @@ class Planner {
     }
     // не вышло по правилам — остальное просто ставим по порядку (лучше так, чем никак)
     if (rem.length) { ok = false; rem.sort((a, b) => prio(a) - prio(b)); while (rem.length) place(rem[0]); }
-    // убираем леса: у каждой связной кучки ломаешь нижний блок (стоя рядом, не на ней) — осыпается вся
-    const lk = new Set(live.map(c => K(...c)));
-    while (lk.size) {
-      const seed = live.slice().reverse().find(c => lk.has(K(...c))), comp = [seed], seen = new Set([K(...seed)]);
-      for (let h = 0; h < comp.length; h++) for (const [dx, dy, dz] of N6) {
-        const n = [comp[h][0] + dx, comp[h][1] + dy, comp[h][2] + dz], kk = K(...n);
-        if (lk.has(kk) && !seen.has(kk)) { seen.add(kk); comp.push(n); }
-      }
-      const base = comp.reduce((a, c) => (c[1] < a[1] ? c : a));
-      // осыпается от низа вверх
-      comp.sort((a, b) => (a[1] - b[1]) || (Math.abs(a[0] - base[0]) + Math.abs(a[2] - base[2]) - Math.abs(b[0] - base[0]) - Math.abs(b[2] - base[2])));
-      const spots = this.bfs(P).filter(i => { const [x, y, z] = this.xyz(i); return !seen.has(K(x, y - 1, z)) && !seen.has(K(x, y, z)) && !seen.has(K(x, y + 1, z)); });
-      const sp = this.spotFor({ cells: [base] }, spots, true);
-      if (sp) goTo(sp);
-      for (const c of comp) { this.grid[this.idx(...c)] = 0; lk.delete(K(...c)); }
-      acts.push({ a: 'rm', c: base, cells: comp, warp: !sp });
-      fall();
-    }
+    tear(null);
     return { acts, order, temps: maxLive, ok, start, end: P };
   }
   // есть ли на поверхности место, откуда достаёшь до блока
