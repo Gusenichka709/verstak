@@ -516,7 +516,8 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
 /* всё собрано — список схлопывается, по заголовку раскрывается */
 .mbox { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .4s var(--out), opacity .3s; }
 .mbox > div { overflow: hidden; }
-.mats.full:not(.open) .mbox { grid-template-rows: 0fr; opacity: 0; }
+/* всё собрано: даём увидеть последнюю галку, потом список плавно сворачивается и гаснет */
+.mats.full:not(.open) .mbox { grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 1s .6s cubic-bezier(.65, 0, .35, 1), opacity .7s .9s ease-in; }
 .linkbtn { all: unset; cursor: pointer; font-size: 12.5px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; align-self: flex-start; transition: color .2s; }
 .linkbtn:hover, .linkbtn.sure { color: #f08a6a; }
 /* калькулятор */
