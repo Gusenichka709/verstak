@@ -551,7 +551,8 @@ export class Viewer {
       tp += t0;
       const sd = G && en.t === 'path' && shov.get(K(en.x, en.y, en.z));
       if (sd) { sd.tb = tp; this.addAnim(m, 'morph', tp); return; }
-      const kind = kindOf(en); this.addAnim(m, kind, tp, { dust: kind === 'drop' && i % every === 0 });
+      // блок ставят рукой — он возникает на месте, а не падает с неба
+      const kind = FILL.has(en.t) ? 'fill' : 'pop'; this.addAnim(m, kind, tp, { dust: i % every === 0 });
       end = Math.max(end, tp + DUR[kind]);
     });
     if (!this.builder) { this.builder = ENTS.player.build({ tool: 'none' }); this.buildRoot.add(this.builder); }

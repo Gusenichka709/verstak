@@ -163,15 +163,52 @@ class Planner {
     return dx * dx + dy * dy + dz * dz <= R2;
   }
   hitsBody(s, cells) { return cells.some(([x, y, z]) => x === s[0] && z === s[2] && (y === s[1] || y === s[1] + 1)); }
-  // ближайшее (по ходьбе) место, откуда достаёшь до блока; spots — итог последнего обхода
-  spotFor(it, spots) {
-    const c0 = it.cells[0]; let best = null, bd = Infinity;
+  // луч от глаз до точки: твёрдое и чужие леса заслоняют
+  see(E, T, s) {
+    const dx = T[0] - E[0], dy = T[1] - E[1], dz = T[2] - E[2], L = Math.hypot(dx, dy, dz);
+    if (L > REACH) return false;
+    const n = Math.ceil(L / .07);
+    for (let i = 1; i < n; i++) {
+      const u = i / n, x = Math.floor(E[0] + dx * u), y = Math.floor(E[1] + dy * u), z = Math.floor(E[2] + dz * u), v = this.c(x, y, z);
+      if (v === 2 || (v === 4 && !(x === s[0] && z === s[2]))) return false;
+    }
+    return true;
+  }
+  // видна ли с места s грань блока nb, обращённая по нормали m (точки на грани: центр и ближе к углам)
+  faceSeen(s, nb, m) {
+    const E = [s[0] + .5, s[1] + EYE, s[2] + .5], fc = [nb[0] + .5 + m[0] * .5, nb[1] + .5 + m[1] * .5, nb[2] + .5 + m[2] * .5];
+    if ((E[0] - fc[0]) * m[0] + (E[1] - fc[1]) * m[1] + (E[2] - fc[2]) * m[2] <= .02) return false; // грань отвёрнута от глаз
+    const ax = [0, 1, 2].filter(i => !m[i]);
+    for (const [p, q] of [[0, 0], [.35, .35], [-.35, .35], [.35, -.35], [-.35, -.35]]) {
+      const T = [fc[0] + m[0] * .02, fc[1] + m[1] * .02, fc[2] + m[2] * .02]; T[ax[0]] += p; T[ax[1]] += q;
+      if (this.see(E, T, s)) return true;
+    }
+    return false;
+  }
+  // можно ли с места s поставить блок: нужна видимая грань опоры в пределах руки (как правый клик в игре)
+  canPlace(s, it) {
+    if (this.hitsBody(s, it.cells)) return false;
+    const rd = it.en && reqDir(it.en), own = new Set(it.cells.map(c => K(...c)));
+    for (const c of rd ? [it.cells[0]] : it.cells) for (const n of rd ? [DIRS[rd]] : N6) {
+      const nb = [c[0] + n[0], c[1] + n[1], c[2] + n[2]];
+      if (own.has(K(...nb)) || !firm(this.c(...nb))) continue;
+      if (this.faceSeen(s, nb, [-n[0], -n[1], -n[2]])) return true;
+    }
+    return false;
+  }
+  // можно ли с места s ударить по блоку c (сломать леса)
+  canHit(s, c) { return N6.some(m => this.faceSeen(s, c, m)); }
+  // ближайшее (по ходьбе) место, откуда реально ставится блок; spots — итог последнего обхода
+  spotFor(it, spots, hit = false) {
+    const c0 = it.cells[0], cand = [];
     // ниже поверхности стоять дороже: в яму спускаешься, только если сверху никак (иначе замуруешь себя люками)
     const ref = this.G ? this.G.top + 1 : this.floor + 1;
-    const scan = s => { let d = this.dist[this.idx(...s)]; if (d < 0) return; d += Math.max(0, ref - s[1]) * 4; if (d >= bd) return; if (this.reach(s, c0) && !this.hitsBody(s, it.cells)) { bd = d; best = s; } };
+    const scan = s => { const d = this.dist[this.idx(...s)]; if (d < 0 || !this.reach(s, c0)) return; cand.push([d + Math.max(0, ref - s[1]) * 4, s]); };
     if (spots.length < 1331) for (const i of spots) scan(this.xyz(i));
     else for (let x = c0[0] - 5; x <= c0[0] + 5; x++) for (let z = c0[2] - 5; z <= c0[2] + 5; z++) for (let y = c0[1] - 6; y <= c0[1] + 4; y++) if (this.inR(x, y, z)) scan([x, y, z]);
-    return best;
+    cand.sort((a, b) => a[0] - b[0]);
+    for (const [, s] of cand) if (hit ? this.canHit(s, c0) : this.canPlace(s, it)) return s;
+    return null;
   }
   supported(it) {
     const rd = it.en && reqDir(it.en);
@@ -240,7 +277,7 @@ class Planner {
       if (done) continue;
       const T = sup[0];
       if (T && T.cells[0][1] < P[1] - 1 && descend()) continue;
-      if (T && this.pillar(T, spots, goTo, putTemp, () => P)) continue;
+      if (sup.slice(0, 6).some(t => this.pillar(t, spots, goTo, putTemp, () => P))) continue;
       if (!T && this.bridge(rem, prio)) continue;
       if (descend()) continue;
       ok = false; break;
@@ -259,7 +296,7 @@ class Planner {
       // осыпается от низа вверх
       comp.sort((a, b) => (a[1] - b[1]) || (Math.abs(a[0] - base[0]) + Math.abs(a[2] - base[2]) - Math.abs(b[0] - base[0]) - Math.abs(b[2] - base[2])));
       const spots = this.bfs(P).filter(i => { const [x, y, z] = this.xyz(i); return !seen.has(K(x, y - 1, z)) && !seen.has(K(x, y, z)) && !seen.has(K(x, y + 1, z)); });
-      const sp = this.spotFor({ cells: [base] }, spots);
+      const sp = this.spotFor({ cells: [base] }, spots, true);
       if (sp) goTo(sp);
       for (const c of comp) { this.grid[this.idx(...c)] = 0; lk.delete(K(...c)); }
       acts.push({ a: 'rm', c: base, cells: comp, warp: !sp });
@@ -270,7 +307,7 @@ class Planner {
   // есть ли на поверхности место, откуда достаёшь до блока
   fromTop(it, ref) {
     const [cx, , cz] = it.cells[0];
-    for (let x = cx - 4; x <= cx + 4; x++) for (let z = cz - 4; z <= cz + 4; z++) for (const y of [ref, ref + 1]) if (this.standable(x, y, z) && this.reach([x, y, z], it.cells[0]) && !this.hitsBody([x, y, z], it.cells)) return true;
+    for (let x = cx - 4; x <= cx + 4; x++) for (let z = cz - 4; z <= cz + 4; z++) for (const y of [ref, ref + 1]) if (this.standable(x, y, z) && this.canPlace([x, y, z], it)) return true;
     return false;
   }
   // вылезти из ямы: блок под себя, пока рядом не окажется поверхность
@@ -299,7 +336,7 @@ class Planner {
         const cost = H * 4 + d;
         if (cost >= bc) break;
         const at = [s[0], top, s[2]];
-        if (this.reach(at, c0) && !this.hitsBody(at, T.cells)) { best = [s, H]; bc = cost; break; }
+        if (this.reach(at, c0) && this.canPlace(at, T)) { best = [s, H]; bc = cost; break; }
       }
     }
     if (!best) return false;
