@@ -279,14 +279,31 @@ class Planner {
         if (T && comp.some(c => Math.abs(c[0] - T.cells[0][0]) + Math.abs(c[2] - T.cells[0][2]) <= 2)) continue;
         // кучка держит ещё не поставленный блок (мостик под висячий) — пока нужна
         if (keep !== null && comp.some(c => N6.some(([dx, dy, dz]) => this.rem.has(K(c[0] + dx, c[1] + dy, c[2] + dz))))) continue;
-        const base = comp.reduce((a, c) => (c[1] < a[1] ? c : a));
-        comp.sort((a, b) => (a[1] - b[1]) || (Math.abs(a[0] - base[0]) + Math.abs(a[2] - base[2]) - Math.abs(b[0] - base[0]) - Math.abs(b[2] - base[2])));
-        const spots = this.bfs(P).filter(i => { const [x, y, z] = this.xyz(i); return !seen.has(K(x, y - 1, z)) && !seen.has(K(x, y, z)) && !seen.has(K(x, y + 1, z)); });
-        const sp = this.spotFor({ cells: [base] }, spots, true);
-        if (sp) goTo(sp);
-        for (const c of comp) { this.grid[this.idx(...c)] = 0; const j = live.findIndex(l => l[0] === c[0] && l[1] === c[1] && l[2] === c[2]); if (j >= 0) live.splice(j, 1); }
-        acts.push({ a: 'rm', c: base, cells: comp, warp: !sp }); n++;
-        fall();
+        // как в игре: ломаешь нижний блок столба — разом осыпается всё, что на нём держалось
+        // (леса держатся на блоке под собой или до 6 блоков вбок от того, что стоит); другие столбы кучки стоят дальше
+        let left = comp.slice();
+        while (left.length) {
+          const base = left.filter(c => this.c(c[0], c[1] - 1, c[2]) !== 4).reduce((a, c) => (!a || c[1] < a[1] ? c : a), null) || left[0];
+          const spots = this.bfs(P).filter(i => { const [x, y, z] = this.xyz(i); return !seen.has(K(x, y - 1, z)) && !seen.has(K(x, y, z)) && !seen.has(K(x, y + 1, z)); });
+          const sp = this.spotFor({ cells: [base] }, spots, true);
+          if (sp) goTo(sp);
+          this.grid[this.idx(...base)] = 0;
+          const rest = left.filter(c => c !== base), dist = new Map();
+          for (let ch = true, g = 0; ch && g < 64; g++) {
+            ch = false;
+            for (const c of rest.slice().sort((p, q) => p[1] - q[1])) {
+              const below = this.c(c[0], c[1] - 1, c[2]);
+              let d = below === 2 ? 0 : below === 4 ? dist.get(K(c[0], c[1] - 1, c[2])) ?? Infinity : Infinity;
+              if (below !== 2) for (const [dx, dz] of N4) d = Math.min(d, (dist.get(K(c[0] + dx, c[1], c[2] + dz)) ?? Infinity) + 1);
+              if (d !== (dist.get(K(...c)) ?? Infinity)) { dist.set(K(...c), d); ch = true; }
+            }
+          }
+          const fallen = [base, ...rest.filter(c => !((dist.get(K(...c)) ?? Infinity) <= 6))];
+          for (const c of fallen) { this.grid[this.idx(...c)] = 0; const j = live.findIndex(l => l[0] === c[0] && l[1] === c[1] && l[2] === c[2]); if (j >= 0) live.splice(j, 1); }
+          left = left.filter(c => !fallen.includes(c));
+          acts.push({ a: 'rm', c: base, cells: fallen, warp: !sp }); n++;
+          fall();
+        }
       }
       return n > 0;
     };

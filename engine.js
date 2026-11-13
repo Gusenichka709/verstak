@@ -537,9 +537,8 @@ export class Viewer {
       else if (a.a === 'rm') {
         tell('Леса больше не нужны: сломай нижний блок — осыпятся все');
         face(P, a.c); key(T, P); swing.push([T, T + ACT.rm, ACT.rm / 2]);
-        // сломал нижний — остальные леса этой кучки осыпаются снизу вверх
-        (a.cells || [a.c]).forEach((c, i) => { const t = open.get(K(...c)); if (t) { t.off = T + ACT.rm + i * .05; open.delete(K(...c)); } });
-        if (a.cells) T += a.cells.length * .05;
+        // сломал нижний — всё, что на нём держалось, осыпается разом
+        (a.cells || [a.c]).forEach(c => { const t = open.get(K(...c)); if (t) { t.off = T + ACT.rm; open.delete(K(...c)); } });
         T += ACT.rm;
       }
     }
