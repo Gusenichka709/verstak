@@ -290,6 +290,36 @@ class Planner {
       }
       return n > 0;
     };
+    // мостки: стоишь на лесах — тянешь их вбок на своей высоте и идёшь по ним (в игре леса держатся
+    // до 6 блоков вбок от столба), вместо того чтобы слезать и строить новый столб
+    const hd = new Map(); // сколько блоков вбок от опоры у каждого блока мостков
+    const walkway = T => {
+      if (this.c(P[0], P[1] - 1, P[2]) !== 4) return false;
+      const y = P[1], h0 = hd.get(K(P[0], y - 1, P[2])) || 0, par = new Map([[K(P[0], y, P[2]), null]]), q = [[P[0], P[2], h0]];
+      for (let h = 0; h < q.length && h < 200; h++) {
+        const [x, z, d] = q[h];
+        if (h && this.reach([x, y, z], T.cells[0]) && this.canPlace([x, y, z], T)) {
+          const chain = []; for (let c = [x, z]; c; c = par.get(K(c[0], y, c[1]))) chain.push(c);
+          chain.reverse();
+          for (let i = 1; i < chain.length; i++) {
+            const [nx, nz] = chain[i], u = [nx, y - 1, nz];
+            if (this.c(...u) === 0) { putTemp(u, false); hd.set(K(...u), (hd.get(K(chain[i - 1][0], y - 1, chain[i - 1][1])) || 0) + 1); }
+            acts.push({ a: 'go', path: [P, [nx, y, nz]] }); P = [nx, y, nz];
+          }
+          return true;
+        }
+        for (const [dx, dz] of N4) {
+          const nx = x + dx, nz = z + dz, kk = K(nx, y, nz);
+          if (par.has(kk) || !this.inR(nx, y + 1, nz) || !this.free(nx, y, nz) || !this.free(nx, y + 1, nz)) continue;
+          const u = this.c(nx, y - 1, nz), add = u === 0;
+          if (!(firm(u) || (add && !this.rem.has(K(nx, y - 1, nz)))) || this.rem.has(kk) || this.rem.has(K(nx, y + 1, nz))) continue;
+          const nd = add ? d + 1 : (hd.get(K(nx, y - 1, nz)) || 0);
+          if (nd > 6) continue;
+          par.set(kk, [x, z]); q.push([nx, nz, nd]);
+        }
+      }
+      return false;
+    };
     let guard = rem.length * 8 + 200;
     while (rem.length && guard-- > 0) {
       const spots = this.bfs(P);
@@ -304,6 +334,7 @@ class Planner {
       if (done) continue;
       const T = sup[0];
       if (T && T.cells[0][1] < P[1] - 1 && descend()) continue;
+      if (sup.slice(0, 6).some(walkway)) continue;
       // отсюда ничего не достать — старые леса больше не нужны (до полезных дошёл бы пешком по ним):
       // слезь и сломай их, прежде чем строить новые, — в руках не нужно таскать гору лесов
       if (live.length) {

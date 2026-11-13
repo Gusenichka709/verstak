@@ -283,10 +283,30 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
   .cutbox #cutLabel { width: 250px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
 .cutbox.layer #cutLabel { color: #ffd98a; }
+/* плеер стройки: полоса с главами-шагами, как в видео */
+.player { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tl { position: relative; padding: 9px 0; cursor: pointer; touch-action: none; outline: none; }
+.tlsegs { display: flex; gap: 3px; height: 6px; transition: height .12s; }
+.tl:hover .tlsegs, .tl.drag .tlsegs, .tl:focus-visible .tlsegs { height: 10px; }
+.tlsegs i { flex: 1; position: relative; background: #2d3940; border-radius: 2px; overflow: hidden; }
+.tlsegs i::before { content: ''; position: absolute; inset: 0; background: var(--gold); transform-origin: left; transform: scaleX(var(--f, 0)); }
+.tlsegs i.hov { background: #41515a; }
+.tlknob { position: absolute; top: 50%; left: calc(var(--x, 0) * 100%); width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #ffd98a; box-shadow: 0 0 0 2px rgba(0,0,0,.35); transform: scale(0); transition: transform .12s; pointer-events: none; }
+.tl:hover .tlknob, .tl.drag .tlknob, .tl:focus-visible .tlknob { transform: scale(1); }
+.tltip { position: absolute; bottom: 100%; left: 0; transform: translateX(-50%); white-space: nowrap; max-width: 80vw; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; color: var(--ink); background: rgba(18,23,27,.95); border: 1px solid var(--line); padding: 3px 8px; border-radius: 6px; pointer-events: none; opacity: 0; transition: opacity .1s; z-index: 3; }
+.tl:hover .tltip, .tl.drag .tltip { opacity: 1; }
+.pbar2 { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
+.pbar2 .grow { flex: 1; }
+.btn.ic { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 34px; padding: 0; }
+.btn.ic.big { width: 46px; }
+.btn.ic svg { width: 16px; height: 16px; fill: currentColor; position: relative; z-index: 1; }
+#pp svg { display: none; } #pp[data-s="play"] .i-play, #pp[data-s="pause"] .i-pause, #pp[data-s="again"] .i-again { display: block; }
+.tlab { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tlab b { color: var(--ink); font-weight: 600; }
 .blk { display: inline-flex; align-items: center; gap: 6px; }
 .blk[hidden] { display: none; }
 .blk input { width: 120px; accent-color: var(--gold); }
-.blk small { color: var(--muted); font-size: 12.5px; min-width: 70px; font-variant-numeric: tabular-nums; }
+.blk small { color: var(--muted); font-size: 12.5px; min-width: 84px; text-align: center; font-variant-numeric: tabular-nums; }
 .wscraft { margin: 0; font-size: 13.5px; color: #d3cdbf; }
 .wscraft span { font-style: normal; font-size: 11.5px; padding: 1px 7px; border-radius: 999px; margin-right: 7px; border: 1px solid rgba(240,185,74,.5); color: #f3d58a; }
 /* дерево зельеварения */
@@ -626,17 +646,20 @@ svg.mods { display: block; width: 100%; max-width: 280px; margin: 12px auto 0; c
         <div class="hint">тяни — вращать · колесо — зум · клик по блоку — его шаг</div>
       </div>
       <div class="controls">
-        <div class="grp">
-          <button class="btn" id="prev" aria-label="Предыдущий шаг">◀</button>
-          <button class="btn" id="next" aria-label="Следующий шаг">▶</button>
-          <button class="btn" id="replay" aria-label="Показать шаг ещё раз" title="Показать шаг ещё раз: как копать и что ставить">↻ Шаг ещё раз</button>
-          <button class="btn" id="stepPause" aria-pressed="false" disabled title="Остановить постройку шага на любом блоке и продолжить с него же">⏸ Пауза</button>
-          <button class="btn primary" id="play" aria-pressed="false"><span>▶ Собрать с нуля</span></button>
-          <button class="btn" id="playHere" title="Собирать дальше, начиная с открытого шага">▶ С этого шага</button>
-          <button class="btn" id="stop" hidden aria-label="Остановить сборку">■ Стоп</button>
-          <label class="speed" title="Скорость стройки и демо">🐢 <select id="speed" aria-label="Скорость стройки"><option value="0.25">×¼</option><option value="0.5">×½</option><option value="1">×1</option><option value="2">×2</option></select></label>
-          <span class="blk" id="blk"><button class="btn" id="bPrev" aria-label="Блок назад">◀ блок</button><input type="range" id="bScrub" min="0" value="0" aria-label="По одному блоку"><button class="btn" id="bNext" aria-label="Блок вперёд">блок ▶</button><small id="bLbl"></small></span>
-          <button class="btn" id="demoBtn" aria-pressed="true" hidden>Демо работы</button>
+        <div class="player" id="player">
+          <div class="tl" id="tl" role="slider" tabindex="0" aria-label="Ход постройки: шаги и место внутри шага" aria-valuemin="0" aria-valuemax="100"><div class="tlsegs"></div><i class="tlknob"></i><span class="tltip"></span></div>
+          <div class="pbar2">
+            <button class="btn ic" id="prev" aria-label="Предыдущий шаг" title="Предыдущий шаг (←)"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+            <button class="btn primary ic big" id="pp" aria-label="Играть" title="Играть / пауза (пробел)"><svg class="i-play" viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg><svg class="i-pause" viewBox="0 0 16 16"><path d="M3 2h4v12H3zM9 2h4v12H9z"/></svg><svg class="i-again" viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 5 5h-2a3 3 0 1 1-3-3v3l4-4-4-4z"/></svg></button>
+            <button class="btn ic" id="next" aria-label="Следующий шаг" title="Следующий шаг (→)"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2v12l8-6z"/></svg></button>
+            <button class="btn ic" id="replay" aria-label="Шаг сначала" title="Показать этот шаг сначала"><svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 5 5h-2a3 3 0 1 1-3-3v3l4-4-4-4z"/></svg></button>
+            <span class="tlab" id="tlab"></span>
+            <span class="grow"></span>
+            <span class="blk" id="blk" title="На один блок назад или вперёд ( , и . )"><button class="btn sm" id="bPrev" aria-label="Блок назад">◂</button><small id="bLbl"></small><button class="btn sm" id="bNext" aria-label="Блок вперёд">▸</button></span>
+            <label class="chk" title="Выключи — и все шаги пойдут подряд, как фильм"><input type="checkbox" id="stopEach" checked>пауза после шага</label>
+            <label class="speed" title="Скорость стройки и демо">скорость <select id="speed" aria-label="Скорость стройки"><option value="0.25">×0,25</option><option value="0.5">×0,5</option><option value="1">×1</option><option value="2">×2</option><option value="4">×4</option></select></label>
+            <button class="btn" id="demoBtn" aria-pressed="true" hidden>Демо работы</button>
+          </div>
         </div>
         <div class="cutbox">
           <label class="cut">Срез <input id="cut" type="range" step="1" aria-label="Показывать слои до высоты"></label>

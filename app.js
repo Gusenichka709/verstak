@@ -23,7 +23,7 @@ const mechs = await Promise.all(MECH_IDS.map(id => import(`./mech/${id}.js`).the
 let mode = 'farms'; // какой список показан слева: 'farms' или 'mech'
 const LIST = () => (mode === 'mech' ? mechs : farms), CATL = () => (mode === 'mech' ? MCATS : CATS);
 const noun = f => (f?.kind === 'mech' ? 'схему' : 'ферму');
-let farm = null, viewer = null, playing = null, curK = 1;
+let farm = null, viewer = null, curK = 1;
 
 /* ---------- анимации интерфейса ----------
    Появления — через WAAPI и только на настоящие события (смена фермы, шага, первый заход во вкладку):
@@ -296,24 +296,7 @@ function setStep(k, animate = true, replay = false) {
   else curK = Math.max(1, Math.min(farm.steps.length, k)); // без WebGL шаги всё равно листаются
   save('at:' + farm.id, curK === farm.steps.length ? undefined : curK); // вернёшься — откроется на том же шаге
   if (!uiRaf) uiRaf = nextFrame(syncUI);
-  stepPauseWatch();
-}
-// пауза постройки любого шага: кнопка живая, пока шаг строится или стоит на паузе; «Продолжить» — с того же блока.
-// Во время «Собрать с нуля» у неё своя пауза на большой кнопке, эта молчит.
-let spT = 0;
-function stepPauseWatch() {
-  clearInterval(spT);
-  const b = $('#stepPause');
-  const tick = () => {
-    if (!viewer || !b) return;
-    const busy = !playing && (viewer.paused || viewer.animLeft() > .05);
-    b.disabled = !busy;
-    const p = busy && viewer.paused, txt = p ? '▶ Продолжить' : '⏸ Пауза';
-    if (b.textContent !== txt) b.textContent = txt;
-    b.setAttribute('aria-pressed', p);
-    if (!busy) clearInterval(spT);
-  };
-  tick(); spT = setInterval(tick, 150);
+  if (animate && viewer) seenK = curK; // постройку этого шага уже показывали
 }
 function syncUI() {
   if (!uiRaf) return;
@@ -602,23 +585,12 @@ function updateControls() {
   cut.value = viewer.opt.cut === null ? lv.hi : viewer.opt.cut;
   showCut();
 }
-// «по одному блоку» прячем, только если в шаге вообще ничего не ставят; если блоки спрятал срез —
-// кнопки просто гаснут, но место держат, иначе весь ряд управления прыгает
+// «на блок назад/вперёд» прячем, только если в шаге вообще ничего не ставят
 function syncBlk() {
-  const n = viewer.seqLen(), sc = $('#bScrub'), s = farm.steps[viewer.k - 1], any = !!(s.put?.length || s.dig?.length || s.ents?.length);
-  $('#blk').hidden = !any; $('#blk').style.visibility = n ? '' : 'hidden';
-  sc.max = n; sc.value = n; blkLabel();
+  const s = farm.steps[viewer.k - 1], any = !!(s.put?.length || s.dig?.length || s.ents?.length);
+  $('#blk').hidden = !any;
 }
-// настройка вида сбрасывает «по одному блоку», ползунок должен это знать
 function setOpt(o) { viewer.set(o); syncBlk(); }
-function blkLabel() { const sc = $('#bScrub'); $('#bLbl').textContent = `блок ${sc.value}/${sc.max}`; }
-// на паузе «Собрать с нуля» листаем блоки от места, где стройка застыла, и сборка не сбрасывается:
-// «Продолжить» потом достроит шаг с этого блока
-function blkGo(v) {
-  if (playing && !playing.paused) pausePlay(true);
-  else if (!playing) stopPlay();
-  const sc = $('#bScrub'); sc.max = viewer.seqLen(); sc.value = Math.max(0, Math.min(+sc.max, v)); viewer.scrub(+sc.value); blkLabel();
-}
 const blkWord = n => n % 10 === 1 && n % 100 !== 11 ? 'блок' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'блока' : 'блоков';
 let cutShown = null;
 function showCut() {
@@ -692,58 +664,80 @@ function legendHtml(f) {
   return out.join('');
 }
 
-/* ---------- «Собрать с нуля» ---------- */
-function playLabel(t) {
-  const b = $('#play'), s = b.querySelector('span');
-  s.textContent = t;
-  if (!calm()) s.animate([{ opacity: 0, transform: 'translateY(4px)' }, {}], { duration: 160, easing: EASE.out });
+/* ---------- плеер стройки: как видео. Полоса — вся ферма, отрезки — шаги; тянешь — мотаешь ---------- */
+// chain — нажали «играть»: после шага идём дальше (сразу или после паузы, если стоит «пауза после шага»)
+let chain = false, holdT = 0, seenK = 0, plRaf = 0, tlN = 0;
+const animating = () => !!viewer && !viewer.paused && viewer.animLeft() > .02;
+function stopPlay() { clearTimeout(holdT); holdT = 0; chain = false; }
+function pausePlay(on) { if (!viewer) return; if (on) { clearTimeout(holdT); holdT = 0; if (animating()) viewer.pause(true); } else viewer.pause(false); }
+function togglePlay() {
+  const N = farm.steps.length;
+  if (viewer.paused) { viewer.pause(false); chain = true; return; }
+  if (animating() || holdT) { clearTimeout(holdT); holdT = 0; if (animating()) viewer.pause(true); else chain = false; return; }
+  chain = true;
+  if (seenK !== viewer.k) setStep(viewer.k, true, true);       // шаг открыт готовым — сначала покажем, как он строится
+  else if (viewer.k < N) setStep(viewer.k + 1, true);          // досмотрел шаг — дальше
+  else setStep(1, true, true);                                  // конец — с самого начала
 }
-// playing: { timer, due — когда следующий шаг, left — сколько оставалось на паузе }
-function stopPlay(done) {
-  if (!playing) return;
-  clearTimeout(playing.timer); playing = null;
-  if (!done) viewer?.halt(); // стоп — шаг встаёт сразу, ничего не доставляется в фоне
-  const b = $('#play');
-  b.classList.remove('playing', 'paused'); b.setAttribute('aria-pressed', 'false');
-  playLabel('▶ Собрать с нуля');
-  badge($('#stop'), false);
-  if (done && !calm()) { b.animate(KF.pop, { duration: 360, easing: EASE.spring }); $('#panel .prog')?.animate(KF.pop, { duration: 360, easing: EASE.spring }); }
-  setTimeout(() => { if (!playing) b.style.setProperty('--p', 0); }, 300);
+const mmss = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+// раз в кадр: полоса, кнопка, подписи; здесь же переход к следующему шагу
+function playerTick() {
+  plRaf = requestAnimationFrame(playerTick);
+  if (!viewer || !farm || $('#v-farms').hidden) return;
+  const N = farm.steps.length, k = viewer.k, f = viewer.stepFrac(), segs = $('#tl .tlsegs');
+  if (tlN !== N || segs.dataset.id !== farm.id) { seenK = 0; segs.innerHTML = '<i></i>'.repeat(N); segs.dataset.id = farm.id; tlN = N; }
+  [...segs.children].forEach((el, i) => { const v = i + 1 < k ? 1 : i + 1 > k ? 0 : f; if (el._f !== v) { el._f = v; el.style.setProperty('--f', v); } });
+  const tl = $('#tl'); tl.style.setProperty('--x', (k - 1 + f) / N); tl.setAttribute('aria-valuenow', Math.round((k - 1 + f) / N * 100)); tl.setAttribute('aria-valuetext', `шаг ${k} из ${N}`);
+  const run = animating(), st = run || holdT ? 'pause' : (!viewer.paused && seenK === k && k >= N ? 'again' : 'play');
+  const pp = $('#pp'); if (pp.dataset.s !== st) { pp.dataset.s = st; pp.setAttribute('aria-label', st === 'pause' ? 'Пауза' : st === 'again' ? 'Сначала' : 'Играть'); }
+  const d = viewer.stepDur(k), lab = `<b>Шаг ${k} из ${N}</b>${d > .3 ? ` · ${mmss(f * d)} / ${mmss(d)}` : ''}${viewer.paused ? ' · пауза' : ''}`;
+  const tlab = $('#tlab'); if (tlab._h !== lab) { tlab._h = lab; tlab.innerHTML = lab; }
+  const [bn, bN] = viewer.blockPos(), bl = bN ? `блок ${bn} из ${bN}` : '', bLbl = $('#bLbl'); if (bLbl.textContent !== bl) bLbl.textContent = bl;
+  // шаг достроен: дальше сам или ждём кнопку
+  if (chain && !viewer.paused && !run && !holdT) {
+    if ($('#stopEach').checked || k >= N) chain = false;
+    else holdT = setTimeout(() => { holdT = 0; if (chain) setStep(viewer.k + 1, true); }, 900 / viewer.speed);
+  }
 }
-// следующий шаг — когда докопали и достроили текущий
-const playWait = () => Math.max(2200 / viewer.speed, (viewer.animLeft() * 1000 + 1100) / viewer.speed);
-function playArm(ms) { playing.due = performance.now() + ms; playing.timer = setTimeout(playTick, ms); }
-function playTick() {
-  if (viewer.k >= farm.steps.length) return stopPlay(true);
-  setStep(viewer.k + 1, true);
-  $('#play').style.setProperty('--p', viewer.k / farm.steps.length);
-  playArm(playWait());
+// перемотка: место на полосе → шаг и доля шага
+function tlSeek(e, tip) {
+  const tl = $('#tl'), r = tl.getBoundingClientRect(), N = farm.steps.length;
+  const x = Math.max(0, Math.min(.9999, (e.clientX - r.left) / r.width)) * N, k = Math.floor(x) + 1, f = x - (k - 1);
+  const t = tl.querySelector('.tltip'); t.textContent = `${k}. ${farm.steps[k - 1].t}`; t.style.left = Math.max(60, Math.min(r.width - 60, e.clientX - r.left)) + 'px';
+  [...tl.querySelectorAll('.tlsegs i')].forEach((el, i) => el.classList.toggle('hov', i === k - 1));
+  if (tip) return;
+  if (k !== viewer.k) { const p = viewer.paused; setStep(k, false); viewer.paused = p; }
+  seenK = k; viewer.seekFrac(f);
 }
-function pausePlay(on) {
-  if (!playing || !!playing.paused === on) return;
-  const b = $('#play');
-  playing.paused = on; viewer.pause(on); b.classList.toggle('paused', on);
-  if (on) { clearTimeout(playing.timer); playing.left = Math.max(0, playing.due - performance.now()); playLabel('▶ Продолжить'); }
-  else { playLabel('⏸ Пауза'); if (viewer.seq) playBlocks(); else playArm(playing.left); }
-}
-// после ручного «по одному блоку» достраиваем шаг блок за блоком, потом — дальше по шагам
-function playBlocks() {
-  const sc = $('#bScrub'), n = viewer.seqLen(), i = viewer.progress();
-  if (i >= n) return playArm(1100 / viewer.speed);
-  sc.value = i + 1; viewer.scrub(i + 1); blkLabel();
-  playing.timer = setTimeout(playBlocks, (i < viewer.digCells(viewer.k).length ? 40 : 120) / viewer.speed);
-}
-// from — с какого шага собирать: 1 — «Собрать с нуля», viewer.k — «С этого шага»
-function play(from = 1) {
-  if (playing) return pausePlay(!playing.paused);
-  const b = $('#play'), N = farm.steps.length, k = Math.min(Math.max(1, from), N);
-  playing = {};
-  b.classList.add('playing'); b.setAttribute('aria-pressed', 'true');
-  playLabel('⏸ Пауза');
-  badge($('#stop'), true);
-  setStep(k, true, true);
-  b.style.setProperty('--p', k / N);
-  playArm(playWait());
+function initPlayer() {
+  const tl = $('#tl'); let drag = null;
+  tl.addEventListener('pointerdown', e => {
+    if (e.button) return;
+    tl.setPointerCapture(e.pointerId); tl.classList.add('drag');
+    // тянешь — картинка стоит; отпустил — продолжает, если до этого играло
+    drag = { was: animating() || !!holdT }; clearTimeout(holdT); holdT = 0; viewer.pause(true);
+    tlSeek(e);
+  });
+  let raf = 0, last = null;
+  tl.addEventListener('pointermove', e => { last = e; if (raf) return; raf = requestAnimationFrame(() => { raf = 0; tlSeek(last, !drag); }); });
+  const up = () => { if (!drag) return; tl.classList.remove('drag'); if (drag.was) { viewer.pause(false); chain = true; } drag = null; };
+  tl.addEventListener('pointerup', up); tl.addEventListener('pointercancel', up);
+  tl.addEventListener('pointerleave', () => tl.querySelectorAll('.hov').forEach(el => el.classList.remove('hov')));
+  tl.addEventListener('keydown', e => {
+    const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0; if (!d) return;
+    e.preventDefault(); e.stopPropagation(); clearTimeout(holdT); holdT = 0; viewer.pause(true); seenK = viewer.k; viewer.seekFrac(viewer.stepFrac() + d * .05);
+  });
+  $('#pp').onclick = togglePlay;
+  const blk = d => { clearTimeout(holdT); holdT = 0; viewer.pause(true); seenK = viewer.k; viewer.blockStep(d); };
+  $('#bPrev').onclick = () => blk(-1); $('#bNext').onclick = () => blk(1);
+  const se = $('#stopEach'); se.checked = load('stopEach', true); se.onchange = () => save('stopEach', se.checked);
+  addEventListener('keydown', e => {
+    if ($('#v-farms').hidden || e.target.closest?.('input, textarea, select, button, a, [contenteditable]')) return;
+    if (e.key === ' ' || e.key === 'k' || e.key === 'л') { e.preventDefault(); togglePlay(); }
+    else if (e.key === ',' || e.key === 'б') blk(-1);
+    else if (e.key === '.' || e.key === 'ю') blk(1);
+  });
+  if (!plRaf) playerTick();
 }
 
 function initFarmsView() {
@@ -811,21 +805,11 @@ function initControls() {
   window.__viewer = viewer;
   $('#prev').onclick = () => { stopPlay(); setStep(viewer.k - 1, false); };
   $('#next').onclick = () => { stopPlay(); setStep(viewer.k + 1, true); };
-  $('#play').onclick = () => play(1);
-  $('#playHere').onclick = () => { if (playing) stopPlay(); play(viewer.k || 1); };
-  $('#stop').onclick = () => stopPlay();
-  $('#bScrub').oninput = e => blkGo(+e.target.value);
-  $('#bPrev').onclick = () => blkGo(viewer.progress() - 1);
-  $('#bNext').onclick = () => blkGo(viewer.progress() + 1);
+  initPlayer();
   $('#replay').onclick = () => { stopPlay(); setStep(viewer.k, true, true); };
   // скорость стройки: медленнее — успеваешь уследить, как копать
   const sp = $('#speed'); sp.value = String(load('speed', 1)); viewer.speed = +sp.value || 1;
-  sp.onchange = () => {
-    const was = viewer.speed; viewer.speed = +sp.value; save('speed', viewer.speed);
-    // ждём следующий шаг по новой скорости
-    if (playing && !playing.paused && !viewer.seq) { clearTimeout(playing.timer); playArm(Math.max(0, playing.due - performance.now()) * was / viewer.speed); }
-  };
-  $('#stepPause').onclick = () => { if (playing) return; viewer.pause(!viewer.paused); stepPauseWatch(); };
+  sp.onchange = () => { viewer.speed = +sp.value; save('speed', viewer.speed); };
   $('#demoBtn').onclick = () => { setOpt({ demo: !viewer.opt.demo }); $('#demoBtn').setAttribute('aria-pressed', viewer.opt.demo); };
   // ползунок шлёт input чаще кадров: применяем не больше раза за кадр
   let cutRaf = 0;

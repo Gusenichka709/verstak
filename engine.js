@@ -323,11 +323,11 @@ export class Viewer {
   entOn(e, k) { return e.step <= k && (!e.until || k < e.until); }
 
   /* ---------- шаги ---------- */
-  goto(k, { animate = true, replay = false } = {}) {
+  goto(k, { animate = true, replay = false, silent = false } = {}) {
     k = Math.max(1, Math.min(this.N, k));
     this.paused = false;
     // тот же шаг (стрелка у края, клик по блоку этого шага) — ничего не перестраиваем
-    if (k === this.k && !replay && this.active) { this.cb.onStep && this.cb.onStep(k); return; }
+    if (k === this.k && !replay && this.active) { if (!silent) this.cb.onStep && this.cb.onStep(k); return; }
     const prev = this.k; this.k = k;
     const reduced = RM.matches;
     this.fitCut(k);
@@ -382,6 +382,10 @@ export class Viewer {
       end = t0 + (entsIn.length - 1) * .2 + DUR.entIn;
     }
     this.animEnd = end;
+    // для перемотки: когда шаг начался и кончится, и моменты, когда встаёт (или ломается) каждый блок
+    this.stepT0 = now; this.stepEnd = Math.max(now, end); this.sched = fwd ? k : 0;
+    this.marks = fwd ? [...this.anims.filter(a => !LEAVE.has(a.kind)).map(a => a.t0 + a.dur * a.land), ...this.digs.filter(d => !d.shovel).map(d => d.tb)].map(t => t - now).sort((a, b) => a - b) : [];
+    if (fwd) (this.durs ||= new Map()).set(k, this.stepEnd - now);
     // демо последнего шага начинается с начала цикла и только когда постройка встала
     this.demoT0 = Math.max(now, end) + (fwd ? .35 : 0);
     this.refreshVisibility();
@@ -392,7 +396,7 @@ export class Viewer {
     entsOut.forEach(m => { m.visible = true; this.addAnim(m, 'entOut', now); });
     this.buildHighlights();
     if (prev && prev !== k) { const sb = this.stepBounds(k); if (sb && k !== this.N) this.focusOn(sb); else this.fit('keep'); }
-    this.cb.onStep && this.cb.onStep(k);
+    if (!silent) this.cb.onStep && this.cb.onStep(k);
   }
   // срез сам подстраивается под шаг: поднимается, если новое выше, и опускается в «сплошном» грунте,
   // если всё новое закопано (подвал фермы железа). Свой автосрез снимаем, когда он больше не нужен.
@@ -481,7 +485,7 @@ export class Viewer {
   // приземлился: пыль из-под блока и рамка «новое» щёлкает на место
   landed(a) {
     this.pending.delete(a.id);
-    if (a.dust && a.m.visible) this.dustFx(a.m);
+    if (a.dust && a.m.visible && !this.quiet) this.dustFx(a.m);
     const objs = this.hlBy?.get(a.id);
     if (objs) { objs.forEach(o => (o.visible = true)); this.hlAnims.push({ objs, t0: this.at, s: objs[0].userData.s }); }
   }
@@ -512,7 +516,7 @@ export class Viewer {
       else if (a.a === 'fall') { key(T + .04, P); T += .04 + ACT.fall * Math.max(1, P[1] - a.to[1]); key(T, a.to); P = a.to; }
       else if (a.a === 'put') {
         const en = this.entries[a.id], c = en.cells[0];
-        tell(`Поставь: ${BLOCKS[en.t].n.replace(/ \(.*\)$/, '')} · ${++iPut} из ${nPut}`);
+        tell(`Поставь: ${BLOCKS[en.t].n.replace(/ \(.*\)$/, '')}`);
         face(P, c); key(T, P); swing.push([T, T + ACT.put, ACT.put]);
         at.set(a.id, T + ACT.put * .4); lastPut = T + ACT.put * .4; if (en.t === 'water') lastWater = lastPut;
         T += ACT.put;
@@ -587,7 +591,7 @@ export class Viewer {
     if (T < ks[0][0]) o.rotation.y = b.a.yaw; else this.animPerson(b.a, o, T, x, z);
     for (const p of b.temps) {
       const on = T >= p.on && (p.off === undefined || T < p.off);
-      if (!on && p.off !== undefined && T >= p.off && !p.gone) { p.gone = true; if (T - p.off < .3) this.chips({ x: p.c[0], y: p.c[1], z: p.c[2], kind: '#d9b54a', floor: p.c[1] }, 6, .7, .45); }
+      if (!on && p.off !== undefined && T >= p.off && !p.gone) { p.gone = true; if (T - p.off < .3 && !this.quiet) this.chips({ x: p.c[0], y: p.c[1], z: p.c[2], kind: '#d9b54a', floor: p.c[1] }, 6, .7, .45); }
       p.m.visible = on && !(cut !== null && p.c[1] > cut);
       if (!p.m.visible) continue;
       // встаёт с лёгким перелётом, перед тем как сломают — дрожит
@@ -828,12 +832,40 @@ export class Viewer {
     this.dirty = true;
   }
   animLeft() { return Math.max(0, this.animEnd - this.at); }
+  /* ---------- перемотка шага, как в видео ---------- */
+  stepDur(k = this.k) { return this.durs?.get(k) ?? 0; }
+  // 0…1: какая доля постройки шага уже показана (шаг, открытый без анимации, — построен целиком)
+  stepFrac() { const d = this.stepEnd - this.stepT0; return this.sched === this.k && d > 0 ? clamp01((this.at - this.stepT0) / d) : 1; }
+  // поставить шаг на момент T секунд от начала; пауза остаётся паузой
+  seekT(T) {
+    if (RM.matches) return;
+    const p = this.paused;
+    this.goto(this.k, { replay: true, silent: true });
+    this.paused = p;
+    this.at = this.stepT0 + Math.max(0, Math.min(T, this.stepEnd - this.stepT0));
+    this.demoT0 = Math.max(this.demoT0, this.at);
+    this.quiet = true; this.force = true; this.dirty = true; // без лавины пыли и крошек от всего, что перемотали
+  }
+  seekFrac(f) { if (this.sched !== this.k) this.seekT(0); this.seekT(clamp01(f) * (this.stepEnd - this.stepT0)); }
+  // сколько блоков шага уже на месте и сколько всего
+  blockPos() {
+    if (this.sched !== this.k) return [this.marks?.length || 0, this.marks?.length || 0];
+    const T = this.at - this.stepT0; let n = 0; for (const m of this.marks) if (m <= T + 1e-3) n++;
+    return [n, this.marks.length];
+  }
+  // на блок вперёд или назад (как покадрово в видео)
+  blockStep(d) {
+    if (RM.matches) return;
+    if (this.sched !== this.k) { const p = this.paused; this.seekT(0); this.paused = p; this.at = this.stepEnd; }
+    const n = Math.max(0, Math.min(this.marks.length, this.blockPos()[0] + d));
+    this.seekT(n === 0 ? 0 : n === this.marks.length ? this.stepEnd - this.stepT0 : this.marks[n - 1] + .03);
+  }
   // пауза «Собрать с нуля»: своё время стоит, всё замирает на месте; вращать сцену можно
   pause(on) { this.paused = on; this.dirty = true; }
   // стоп: недоигранное в шаге встаёт на место сразу, без анимаций
   halt() {
     this.paused = false;
-    this.finishAnims(); this.clearDig(); this.animEnd = 0;
+    this.finishAnims(); this.clearDig(); this.animEnd = 0; this.sched = 0;
     this.refreshVisibility(); this.buildHighlights();
   }
   replay() { this.goto(this.k, { replay: true }); }
@@ -1012,7 +1044,7 @@ export class Viewer {
     // «по одному блоку» сбрасываем к целому шагу; копание посреди шага не трогаем,
     // а если поменяли срез или грунт — доводим шаг до конца, иначе стройка зависнет в пустоте
     if (this.seq) this.clearDig();
-    else if (('cut' in opt || 'ground' in opt) && (this.anims.length || this.digs.length)) { this.finishAnims(); this.clearDig(); this.animEnd = 0; }
+    else if (('cut' in opt || 'ground' in opt) && (this.anims.length || this.digs.length)) { this.finishAnims(); this.clearDig(); this.animEnd = 0; this.sched = 0; }
     if ('ground' in opt || 'cut' in opt || 'solo' in opt || 'layer' in opt) this.buildGround();
     this.refreshVisibility();
     if ('cut' in opt || 'layer' in opt) this.buildGrid();
@@ -1275,12 +1307,12 @@ export class Viewer {
     const real = this.clock.getElapsedTime();
     const dt = Math.min(.05, real - (this.lastT ?? real)); this.lastT = real;
     if (!this.onScreen) return;
-    if (this.paused) {
+    if (this.paused && !this.force) {
       this.controls.update();
       if (this.dirty) { this.dirty = false; this.renderer.render(this.scene, this.camera); }
       return;
     }
-    const t = this.at += dt * this.speed;
+    const t = this.at += this.paused ? 0 : dt * this.speed; this.force = false;
     let busy = false;
     if (this.tween) {
       const u = Math.min(1, (t - this.tween.t0) / this.tween.dur), e = inOutCubic(u);
@@ -1366,6 +1398,7 @@ export class Viewer {
     }
     // демо остановилось — всё возвращаем: актёров, головы поршней, счётчик для крошек
     else if (this.demoRunning) { this.demoRunning = false; this.resetDemo(); busy = true; }
+    this.quiet = false;
     this.controls.update();
     if (!busy && !this.dirty) return;
     this.dirty = false; this.lastDraw = t;
