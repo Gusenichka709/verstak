@@ -509,7 +509,8 @@ export class Viewer {
       if (a.a === 'go') for (let i = 1; i < a.path.length; i++) {
         const c = a.path[i], dy = c[1] - P[1];
         const scaf = c[0] === P[0] && c[2] === P[2];
-        tell(scaf && dy > 0 ? 'Лезь вверх по лесам: зажми пробел' : scaf && dy < 0 ? 'Спускайся по лесам: зажми Shift' : dy > 0 ? 'Запрыгни на блок' : 'Подойди сюда');
+        // просто ходьбу не подписываем: подпись остаётся от прошлого действия
+        if (scaf) tell(dy > 0 ? 'Лезь вверх по лесам: зажми пробел' : 'Спускайся по лесам: зажми Shift');
         face(P, c); T += dy > 0 ? ACT.climb : ACT.walk + Math.max(0, -dy) * ACT.fall;
         key(T, c); P = c;
       }
